@@ -185,6 +185,12 @@ pub trait EmbeddingProvider: Send {
     /// The embed stage uses this for pre-flight token estimation to avoid
     /// sending chunks that would trigger a "context length exceeded" error.
     fn max_tokens_per_chunk(&self) -> usize;
+
+    /// Recommended number of concurrent in-flight batches. Defaults to 1
+    /// (sequential). Providers that support higher concurrency (e.g. OpenAI
+    /// allows many parallel requests) can override. Kept for future use;
+    /// the current embed stage is single-threaded.
+    fn recommended_concurrency(&self) -> usize { 1 }
 }
 ```
 
@@ -253,6 +259,8 @@ fn classify_response(response: &reqwest::blocking::Response) -> Result<(), Embed
     }
 }
 ```
+
+> **Intentional simplification vs Python:** The Python `_classify_*_error` functions parse provider-specific JSON error bodies for granular retry categories (rate-limit types, billing errors, etc.). The Rust version uses HTTP status codes and `Retry-After` headers — sufficient for the embedding stage because the retry loop handles all retryable errors uniformly with exponential backoff. The Python async path needs finer categories for `asyncio.Semaphore` fairness; the sequential Rust thread does not.
 
 ### 2.3 Factory
 
@@ -448,22 +456,24 @@ struct OpenAIEmbeddingData {
 
 ```rust
 struct VoyageModelInfo {
-    native_dims: usize,
-    max_tokens:  usize,
+    native_dims:          usize,
+    max_tokens_per_chunk: usize,   // context_length per individual text
+    max_tokens_per_batch: usize,   // total token budget per API call (120k or 320k)
+    supported_dimensions: &'static [usize],  // valid output_dims for this model
 }
 
 const VOYAGE_MODEL_CONFIG: phf::Map<&'static str, VoyageModelInfo> = phf_map! {
-    "voyage-3-large"            => VoyageModelInfo { native_dims: 1024, max_tokens: 32000 },
-    "voyage-3"                  => VoyageModelInfo { native_dims: 1024, max_tokens: 32000 },
-    "voyage-3-lite"             => VoyageModelInfo { native_dims:  512, max_tokens: 32000 },
-    "voyage-3.5"                => VoyageModelInfo { native_dims: 1024, max_tokens: 32000 },
-    "voyage-3.5-lite"           => VoyageModelInfo { native_dims: 1024, max_tokens: 32000 },
-    "voyage-code-3"             => VoyageModelInfo { native_dims: 1024, max_tokens: 32000 },
-    "voyage-finance-2"          => VoyageModelInfo { native_dims: 1024, max_tokens: 32000 },
-    "voyage-law-2"              => VoyageModelInfo { native_dims: 1024, max_tokens: 16000 },
-    "voyage-multilingual-2"     => VoyageModelInfo { native_dims: 1024, max_tokens: 32000 },
-    "voyage-large-2-instruct"   => VoyageModelInfo { native_dims: 1024, max_tokens: 16000 },
-    "voyage-2"                  => VoyageModelInfo { native_dims: 1024, max_tokens:  4000 },
+    "voyage-3-large"         => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512, 1024, 2048] },
+    "voyage-3"               => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512, 1024, 2048] },
+    "voyage-3-lite"          => VoyageModelInfo { native_dims:  512, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512] },
+    "voyage-3.5"             => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 320000, supported_dimensions: &[256, 512, 1024, 2048] },
+    "voyage-3.5-lite"        => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 1000000, supported_dimensions: &[256, 512, 1024, 2048] },
+    "voyage-code-3"          => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512, 1024, 2048] },
+    "voyage-finance-2"       => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[1024] },
+    "voyage-law-2"           => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 16000, max_tokens_per_batch: 120000, supported_dimensions: &[1024] },
+    "voyage-multilingual-2"  => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[1024] },
+    "voyage-large-2-instruct"=> VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 16000, max_tokens_per_batch: 120000, supported_dimensions: &[1024] },
+    "voyage-2"               => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk:  4000, max_tokens_per_batch: 320000, supported_dimensions: &[1024] },
 };
 ```
 
@@ -487,7 +497,7 @@ impl VoyageAiProvider {
         let model_info = VOYAGE_MODEL_CONFIG
             .get(&cfg.model)
             .copied()
-            .unwrap_or(VoyageModelInfo { native_dims: 1024, max_tokens: 32000 });
+            .unwrap_or(VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 320000, supported_dimensions: &[] });
 
         let mut client_builder = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(cfg.timeout_seconds));
@@ -545,7 +555,7 @@ impl EmbeddingProvider for VoyageAiProvider {
     fn name(&self) -> &str { "voyageai" }
     fn model(&self) -> &str { &self.model }
     fn dimensions(&self) -> usize { self.output_dims.unwrap_or(self.model_info.native_dims) }
-    fn max_tokens_per_chunk(&self) -> usize { self.model_info.max_tokens }
+    fn max_tokens_per_chunk(&self) -> usize { self.model_info.max_tokens_per_chunk }
 }
 
 #[derive(Deserialize)]
@@ -807,6 +817,7 @@ fn embed_with_retry(
     texts: &[String],
     policy: &RetryPolicy,
     cancelled: &AtomicBool,
+    stats: &mut EmbedStats,          // caller-owned; mutated for retries/failures
 ) -> Result<Vec<Vec<f32>>, EmbedError> {
     let mut attempt: u32 = 0;
     let mut delay = policy.base_delay;
@@ -825,13 +836,13 @@ fn embed_with_retry(
                 return Ok(vectors);
             }
             Err(e) => {
-                buffer.stats.retries += 1;
+                stats.retries += 1;
 
                 if matches!(&e, EmbedError::ContextLengthExceeded(_)) {
                     return Err(e);  // propagate for split-and-retry
                 }
                 if !is_retryable(&e) || attempt >= policy.max_attempts {
-                    buffer.stats.chunks_failed += texts.len() as u64;
+                    stats.chunks_failed += texts.len() as u64;
                     return Err(e);
                 }
                 let wait = if let EmbedError::RateLimited { retry_after: Some(ra) } = &e {
@@ -878,6 +889,9 @@ fn flush_split_batch(
         return Ok(());
     }
 
+    // Brief backoff before retry — avoids hammering the provider
+    sleep_with_jitter(Duration::from_millis(500), true);
+
     buffer.batch = all.split_off(mid);
     let first_half = all;
 
@@ -904,11 +918,15 @@ fn flush_split_batch(
 ### 6.5 Token Estimation
 
 ```rust
-/// Rough token estimate: ~4 chars per token for English code.
-/// Overestimates slightly (safe: smaller batches, not skipped chunks).
+/// Rough token estimate: ~3 chars per token for code (matches Python's
+/// EMBEDDING_CHARS_PER_TOKEN = 3.0, measured empirically for both OpenAI
+/// and VoyageAI). Slightly underestimates (3.0 vs actual 3.0–3.5), producing
+/// smaller batches which is the safe direction.
 /// Actual token counting (tiktoken) is deferred to provider impl if needed.
+const EMBEDDING_CHARS_PER_TOKEN: usize = 3;
+
 fn estimate_tokens(text: &str) -> usize {
-    text.len() / 4
+    text.len() / EMBEDDING_CHARS_PER_TOKEN
 }
 ```
 
@@ -1079,10 +1097,10 @@ src/embed/
 
 ```toml
 [dependencies]
-reqwest      = { version = "0.12", features = ["blocking", "json"] }
+reqwest      = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
-thiserror    = "2"
+thiserror    = "1"                # matches PR #375
 crossbeam    = "0.8"             # already in wiki design
 fastbloom    = { version = "0.7", features = ["serde"] }  # bloom filter
 phf          = { version = "0.11", features = ["macros"] }  # static model config
