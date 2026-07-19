@@ -1166,6 +1166,8 @@ crossbeam    = "0.8"             # already in wiki design
 fastbloom    = { version = "0.7", features = ["serde"] }  # bloom filter
 phf          = { version = "0.11", features = ["macros"] }  # static model config
 rand         = "0.8"             # jitter random
+pyo3-log     = "0.10"            # Rust → Python logging bridge
+log          = "0.4"             # log macros used by all stages
 
 [dev-dependencies]
 mockito      = "1"               # HTTP mock server for provider tests
@@ -1247,7 +1249,74 @@ uv run pytest tests/test_embed_*.py -v       # embed-specific
 
 ---
 
-## 12. Future Work
+## 12. Logging
+
+### 12.1 Approach: `pyo3-log` Bridge
+
+The embed stage (and all Rust pipeline stages) use the `log` crate macros
+(`log::info!()`, `log::warn!()`, `log::error!()`, `log::debug!()`). The
+`pyo3-log` crate routes every Rust log call to Python's `logging` module —
+a single bridge, no separate Rust log file, no format syncing.
+
+```toml
+# Cargo.toml
+[dependencies]
+pyo3-log = "0.10"
+log      = "0.4"
+```
+
+```rust
+// src/lib.rs — module init (called once when Python imports the .so)
+#[pymodule_init]
+fn init_module(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();                     // routes all log::*! → Python logging
+    pyo3::prepare_freethreaded_python();  // required for embed thread callbacks
+    Ok(())
+}
+```
+
+After init, `log::info!()` in Rust = `logging.info()` in Python. All existing
+Python log configuration is inherited:
+
+| Python config | Effect on Rust logs |
+|---|---|
+| `CHUNKHOUND_DEBUG=1` | `log::debug!()` becomes visible |
+| `CHUNKHOUND_DEBUG_FILE=/tmp/ch.log` | Rust logs appear in the debug file alongside Python logs |
+| `--debug` / `--verbose` | Standard Python log level controls apply |
+| `CHUNKHOUND_NO_RICH` | Plain-text output (no rich formatting) |
+| `CHUNKHOUND_MCP_MODE` | Logging goes through MCP protocol, not stdout |
+
+**Thread safety:** `pyo3-log` acquires the GIL per log call. The embed
+stage runs in `py.allow_threads()` — a log call briefly re-acquires the
+GIL, which is negligible since logging is not on the hot path (1–2 lines
+per batch, occasional warnings/errors).
+
+### 12.2 Embed Stage Log Messages
+
+| Location | Level | Example |
+|---|---|---|
+| Batch flush | DEBUG | `"Flushing batch: 204 texts, attempt 1"` |
+| Retry | WARN | `"Embed API retry: attempt 2/3 after 1.5s (HTTP 429)"` |
+| API failure (retries exhausted) | ERROR | `"Embed API failed after 3 attempts: timeout, 204 chunks lost"` |
+| Token skip | WARN | `"Skipping oversized chunk in src/large.py:412 (est. 12000 tokens > 8191 max)"` |
+| Bloom skip count | DEBUG | `"Bloom filter: 1823 chunks skipped, 517 new"` |
+| Completion | INFO | `"Embed stage complete: 517 embeddings sent in 3 batches, 1 retry, 0 failed"` |
+
+### 12.3 What NOT to Do
+
+- **Don't use `env_logger`**: writes to stderr independently, bypassing Python's
+  log routing, `CHUNKHOUND_DEBUG_FILE`, and MCP mode.
+- **Don't use `print!()` / `eprintln!()`**: no log level control, no file routing,
+  no MCP protocol support.
+- **Don't route debug messages through progress callback**: too chatty, wrong
+  abstraction — use `log::debug!()` instead.
+- **Don't use `log::error!()` for parse failures**: parse errors go in
+  `PipelineReport.errors`; `log::warn!()` is for operational warnings that
+  shouldn't alarm users.
+
+---
+
+## 13. Future Work
 
 | Item | When |
 |---|---|

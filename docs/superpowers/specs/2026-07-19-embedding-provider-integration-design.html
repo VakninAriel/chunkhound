@@ -216,6 +216,7 @@
   <a href="#deps">Cargo.toml</a>
   <a href="#tests">Test Strategy</a>
   <a href="#python">Python Call Site</a>
+  <a href="#logging">Logging (pyo3-log bridge)</a>
   <a href="#future">Future Work</a>
 </nav>
 
@@ -975,6 +976,57 @@ stats = chunkhound_native.run_pipeline(
 <p>Python validation (Pydantic) owns config correctness. Rust trusts the dict structure. The GIL is released on <code>run_pipeline</code> entry and re-acquired only to build the return dict.</p>
 
 <!-- ═══════════════════════════════════════════ FUTURE ═══════════════════════════════════════════ -->
+
+<h2 id="logging">Logging — pyo3-log Bridge</h2>
+
+<div class="card">
+  <p>The embed stage (and all Rust pipeline stages) use the <code>log</code> crate macros. The <code>pyo3-log</code> crate routes every Rust <code>log::*!()</code> call to Python's <code>logging</code> module — a single bridge, no separate Rust log file, no format syncing.</p>
+</div>
+
+<pre><code># Cargo.toml
+[dependencies]
+pyo3-log = "0.10"
+log      = "0.4"
+
+// src/lib.rs
+#[pymodule_init]
+fn init_module(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();                     // routes all log::*! → Python logging
+    pyo3::prepare_freethreaded_python();  // required for embed thread callbacks
+    Ok(())
+}</code></pre>
+
+<h4>All Python Log Config Is Inherited</h4>
+<table>
+<tr><th>Python config</th><th>Effect on Rust logs</th></tr>
+<tr><td><code>CHUNKHOUND_DEBUG=1</code></td><td><code>log::debug!()</code> becomes visible</td></tr>
+<tr><td><code>CHUNKHOUND_DEBUG_FILE=/tmp/ch.log</code></td><td>Rust logs appear in debug file alongside Python logs</td></tr>
+<tr><td><code>--debug</code> / <code>--verbose</code></td><td>Standard Python log level controls apply</td></tr>
+<tr><td><code>CHUNKHOUND_NO_RICH</code></td><td>Plain-text output</td></tr>
+<tr><td><code>CHUNKHOUND_MCP_MODE</code></td><td>Logging goes through MCP protocol</td></tr>
+</table>
+
+<p><strong>Thread safety:</strong> <code>pyo3-log</code> acquires the GIL per log call. The embed stage runs in <code>py.allow_threads()</code> — a log call briefly re-acquires the GIL, negligible since logging is not on the hot path (~1-2 lines per batch).</p>
+
+<h4>Embed Stage Log Messages</h4>
+<table>
+<tr><th>Location</th><th>Level</th><th>Example</th></tr>
+<tr><td>Batch flush</td><td><code>DEBUG</code></td><td><code>"Flushing batch: 204 texts, attempt 1"</code></td></tr>
+<tr><td>Retry</td><td><code>WARN</code></td><td><code>"Embed API retry: attempt 2/3 after 1.5s (HTTP 429)"</code></td></tr>
+<tr><td>API failure (exhausted)</td><td><code>ERROR</code></td><td><code>"Embed API failed after 3 attempts: timeout, 204 chunks lost"</code></td></tr>
+<tr><td>Token skip</td><td><code>WARN</code></td><td><code>"Skipping oversized chunk in src/large.py:412 (est. 12000 > 8191 max)"</code></td></tr>
+<tr><td>Bloom skip count</td><td><code>DEBUG</code></td><td><code>"Bloom filter: 1823 chunks skipped, 517 new"</code></td></tr>
+<tr><td>Completion</td><td><code>INFO</code></td><td><code>"Embed stage complete: 517 embeddings in 3 batches, 1 retry, 0 failed"</code></td></tr>
+</table>
+
+<h4>What NOT to Do</h4>
+<ul>
+<li><strong>Don't use <code>env_logger</code>:</strong> writes to stderr independently, bypassing Python's log routing and <code>CHUNKHOUND_DEBUG_FILE</code>.</li>
+<li><strong>Don't use <code>print!()</code> / <code>eprintln!()</code>:</strong> no log level control, no file routing, no MCP protocol support.</li>
+<li><strong>Don't route debug messages through progress callback:</strong> too chatty — use <code>log::debug!()</code> instead.</li>
+<li><strong>Don't use <code>log::error!()</code> for parse failures:</strong> errors go in <code>PipelineReport.errors</code>; <code>log::warn!()</code> is for operational warnings.</li>
+</ul>
+
 
 <h3 id="future">Future Work</h3>
 
