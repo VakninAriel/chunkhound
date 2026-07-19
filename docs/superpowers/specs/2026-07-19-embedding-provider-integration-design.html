@@ -189,6 +189,7 @@
   <h2>Contents</h2>
   <a href="#architecture">Architecture Overview</a>
   <a href="#decisions" class="h2">Design Decisions</a>
+  <a href="#matryoshka">Matryoshka Truncation</a>
   <a href="#main-loop">Embed Stage Main Loop</a>
   <a href="#trait">Provider Trait &amp; UML</a>
   <a href="#batch-flow">Batch &amp; Flush Sequence</a>
@@ -279,6 +280,41 @@ graph TB
 </table>
 
 <!-- ═══════════════════════════════════════════ MAIN LOOP ═══════════════════════════════════════════ -->
+
+<h2 id="matryoshka">Matryoshka Dimension Truncation</h2>
+
+<div class="mermaid">
+flowchart TD
+    subgraph SS["Server-Side Truncation"]
+        S1["embed_batch() called"] --> S2["POST /v1/embeddings<br/>body: {dimensions: 256}"]
+        S2 --> S3["API returns 256-dim vectors<br/>(already truncated)"]
+        S3 --> S4["Return vectors as-is<br/>provider.dimensions() = 256"]
+    end
+
+    subgraph CS["Client-Side Truncation"]
+        C1["embed_batch() called"] --> C2["POST /v1/embeddings<br/>body: NO dimensions param"]
+        C2 --> C3["API returns native 1536-dim vectors"]
+        C3 --> C4["v[..256].to_vec()"] 
+        C4 --> C5["L2-normalize truncated slice"]
+        C5 --> C6["Return 256-dim vectors<br/>provider.dimensions() = 256"]
+    end
+
+    subgraph NO["No Truncation (output_dims=None)"]
+        N1["embed_batch() called"] --> N2["POST /v1/embeddings<br/>body: NO dimensions param"]
+        N2 --> N3["API returns native-dim vectors"]
+        N3 --> N4["Return vectors as-is<br/>provider.dimensions() = native_dims"]
+    end
+
+    style SS fill:#e8f5e9,stroke:#388e3c
+    style CS fill:#fff3e0,stroke:#e65100
+    style NO fill:#e3f2fd,stroke:#1565c0
+</div>
+
+<div class="card">
+  <p>Dimension truncation is <strong>provider-internal</strong>. The embed stage never sees native dimensions — it only calls <code>provider.embed_batch()</code> and receives vectors at <code>provider.dimensions()</code>. The bloom filter key includes the output dimension to correctly distinguish same-model-different-dims embeddings.</p>
+  <p>Config fields: <code>output_dims</code> (target dimension) and <code>client_side_truncation</code> (where truncation happens).</p>
+</div>
+
 
 <h2 id="main-loop">Embed Stage Main Loop</h2>
 
@@ -389,7 +425,11 @@ sequenceDiagram
     E->>E: batch += 8 (now 15 ≥ cap)
 
     E->>API: embed_batch(15 texts)
-    API-->>E: 15 vectors ✓
+    activate API
+    API->>API: POST /v1/embeddings
+    Note over API: Matryoshka dimension truncation:<br/>Server-side: API receives "dimensions"<br/>→ returns already-truncated vectors<br/><br/>Client-side: API returns native-dim<br/>→ provider slices to output_dims<br/>→ L2-normalizes
+    API-->>E: 15 vectors (output_dims length) ✓
+    deactivate API
 
     E->>E: scatter vectors to pending_files
     E->>E: remaining -= 1 per chunk
@@ -401,7 +441,10 @@ sequenceDiagram
     Note over P: Parser done, drops Sender
 
     E->>API: flush remaining batch (1 text)
-    API-->>E: 1 vector ✓
+    activate API
+    API-->>API: same truncation logic
+    API-->>E: 1 vector (output_dims length) ✓
+    deactivate API
 
     E->>D: final safety-net drain
     E->>D: drop tx → DB Writer exit signal
