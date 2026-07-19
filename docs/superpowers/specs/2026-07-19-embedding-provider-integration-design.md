@@ -70,10 +70,10 @@ fn embed_stage(
     provider: Box<dyn EmbeddingProvider>,
     bloom: Arc<AtomicBloomFilter>,
     retry: RetryPolicy,
+    effective_batch_size: usize,
     cancelled: Arc<AtomicBool>,
 ) -> Result<EmbedStats, EmbedError> {
     let mut buffer = EmbedBuffer::new();
-    let effective_batch_size = provider.max_batch_size().min(MAX_CHUNKS_PER_BATCH);
 
     for parsed in rx.iter() {
         // 1. Pass-through for Deleted/Error
@@ -86,10 +86,16 @@ fn embed_stage(
         let mut file = EmbeddedFile::from_parsed(&parsed, &provider);
         let mut new_chunks: usize = 0;
 
+        let mut key = FileKey(buffer.next_key);
+        buffer.next_key += 1;
+
         for (chunk_idx, chunk) in parsed.chunks.iter().enumerate() {
             if chunk.text.trim().is_empty() || chunk.content_hash.is_empty() {
                 continue;  // skip empty / legacy-hashless chunks
             }
+
+            // Replace empty/whitespace-only text with placeholder (matches Python behavior)
+            let text = if chunk.text.trim().is_empty() { "[EMPTY]".to_string() } else { chunk.text.clone() };
 
             // Token check: skip chunks exceeding provider context window
             let token_estimate = estimate_tokens(&chunk.text);
@@ -105,9 +111,9 @@ fn embed_stage(
 
             let file_key = buffer.next_key;
             buffer.batch.push(BatchChunk {
-                file_key,
+                file_key: key,
                 chunk_idx,
-                text: chunk.text.clone(),
+                text,                                 // may be "[EMPTY]" for empty chunks
             });
             buffer.stats.chunks_checked += 1;
             new_chunks += 1;
@@ -116,8 +122,7 @@ fn embed_stage(
         if new_chunks == 0 {
             tx.send(file)?;
         } else {
-            buffer.next_key += 1;
-            buffer.pending_files.insert(file_key, PendingFile { file, remaining: new_chunks });
+            buffer.pending_files.insert(key, PendingFile { file, remaining: new_chunks });
         }
 
         // 3. Flush when batch reaches capacity
@@ -128,15 +133,18 @@ fn embed_stage(
         if cancelled.load(Ordering::Relaxed) { break; }
     }
 
-    // 4. Final flush + error-safe drain (see §5.3)
-    if !buffer.batch.is_empty() {
-        flush_batch(&mut buffer, &tx, &*provider, &retry, &cancelled)?;
-    }
-    // Safety net: any remaining pending files with partial vectors
+    // 4. Final flush + error-safe drain: safety net runs before error propagation
+    let result = if !buffer.batch.is_empty() {
+        flush_batch(&mut buffer, &tx, &*provider, &retry, &cancelled)
+    } else {
+        Ok(())
+    };
+    // Safety net: emit any remaining pending files, ignore error (channel may be dead)
     for (_, pf) in buffer.pending_files.drain() {
-        tx.send(pf.file)?;
+        let _ = tx.send(pf.file);
     }
     drop(tx);
+    result?;
     Ok(buffer.stats)
 }
 ```
@@ -169,7 +177,7 @@ pub trait EmbeddingProvider: Send {
     /// Send a batch of texts. Returns exactly `texts.len()` vectors, in order.
     fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError>;
 
-    /// Max texts per API call (provider-documented limit).
+/// Maximum texts per single API call (provider-documented limit).
     fn max_batch_size(&self) -> usize;
 
     /// Stable provider identifier for bloom keys/stats/logging.
@@ -267,7 +275,10 @@ fn classify_response(response: &reqwest::blocking::Response) -> Result<(), Embed
 ```rust
 pub fn create_provider(cfg: &EmbedConfig) -> Result<Box<dyn EmbeddingProvider>, EmbedError> {
     match cfg.provider.as_str() {
-        "openai" | "azure_openai" => Ok(Box::new(OpenAiProvider::new(cfg)?)),
+        "openai" => Ok(Box::new(OpenAiProvider::new(cfg)?)),
+        // "azure_openai" is not passed by Python Pydantic (Azure is configured
+        // via azure_endpoint field on the openai provider). The openai arm handles
+        // Azure internally via OpenAiProvider::new() detecting the endpoint.
         "voyageai" => Ok(Box::new(VoyageAiProvider::new(cfg)?)),
         other => Err(EmbedError::BadRequest(format!("unknown provider: {other}"))),
     }
@@ -369,6 +380,20 @@ impl OpenAiProvider {
             .copied()
             .unwrap_or(OpenAiModelInfo { native_dims: 1536, max_tokens: 8191, matryoshka: false });
 
+        // Validate client_side_truncation + output_dims constraints
+        if cfg.client_side_truncation && cfg.output_dims.is_none() {
+            return Err(EmbedError::BadRequest(
+                "client_side_truncation requires output_dims to be set".into()
+            ));
+        }
+        if let Some(dims) = cfg.output_dims {
+            if dims > model_info.native_dims {
+                return Err(EmbedError::BadRequest(format!(
+                    "output_dims {} exceeds model native_dims {}", dims, model_info.native_dims
+                )));
+            }
+        }
+
         let mut client_builder = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(cfg.timeout_seconds));
         if !cfg.ssl_verify {
@@ -408,20 +433,26 @@ impl EmbeddingProvider for OpenAiProvider {
             }
         }
 
-        let response = self.client
-            .post(&url)
-            .header("api-key", &self.api_key)
-            .json(&body)
+        let mut request = self.client.post(&url).json(&body);
+        if self.is_azure {
+            request = request.header("api-key", &self.api_key);
+        } else {
+            request = request.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        let response = request
             .send()
             .map_err(|e| EmbedError::Http(e.to_string()))?;
 
-        // Classify BEFORE error_for_status to capture Retry-After header
-        classify_response(&response)?;
+        // Classify BEFORE error_for_status to capture Retry-After header. classify_response takes ownership of the response and returns it on success so the caller can parse the body.
+        let response = classify_response(response)?;
 
         let raw: OpenAIResponse = response.json()
             .map_err(|e| EmbedError::ResponseFormat(e.to_string()))?;
 
-        let mut vectors: Vec<Vec<f32>> = raw.data.into_iter().map(|d| d.embedding).collect();
+        // Sort by index — OpenAI may return embeddings out of order
+        let mut data = raw.data;
+        data.sort_by_key(|d| d.index);
+        let mut vectors: Vec<Vec<f32>> = data.into_iter().map(|d| d.embedding).collect();
         if self.client_side_truncation {
             let out = self.output_dims.unwrap();
             vectors = vectors.into_iter().map(|v| l2_normalize(&v[..out])).collect();
@@ -464,8 +495,6 @@ struct VoyageModelInfo {
 
 const VOYAGE_MODEL_CONFIG: phf::Map<&'static str, VoyageModelInfo> = phf_map! {
     "voyage-3-large"         => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512, 1024, 2048] },
-    "voyage-3"               => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512, 1024, 2048] },
-    "voyage-3-lite"          => VoyageModelInfo { native_dims:  512, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512] },
     "voyage-3.5"             => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 320000, supported_dimensions: &[256, 512, 1024, 2048] },
     "voyage-3.5-lite"        => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 1000000, supported_dimensions: &[256, 512, 1024, 2048] },
     "voyage-code-3"          => VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 120000, supported_dimensions: &[256, 512, 1024, 2048] },
@@ -498,6 +527,20 @@ impl VoyageAiProvider {
             .get(&cfg.model)
             .copied()
             .unwrap_or(VoyageModelInfo { native_dims: 1024, max_tokens_per_chunk: 32000, max_tokens_per_batch: 320000, supported_dimensions: &[] });
+
+        // Validate client_side_truncation + output_dims constraints
+        if cfg.client_side_truncation && cfg.output_dims.is_none() {
+            return Err(EmbedError::BadRequest(
+                "client_side_truncation requires output_dims to be set".into()
+            ));
+        }
+        if let Some(dims) = cfg.output_dims {
+            if dims > model_info.native_dims {
+                return Err(EmbedError::BadRequest(format!(
+                    "output_dims {} exceeds model native_dims {}", dims, model_info.native_dims
+                )));
+            }
+        }
 
         let mut client_builder = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(cfg.timeout_seconds));
@@ -538,12 +581,15 @@ impl EmbeddingProvider for VoyageAiProvider {
             .send()
             .map_err(|e| EmbedError::Http(e.to_string()))?;
 
-        classify_response(&response)?;
+        let response = classify_response(response)?;
 
         let raw: VoyageResponse = response.json()
             .map_err(|e| EmbedError::ResponseFormat(e.to_string()))?;
 
-        let mut vectors: Vec<Vec<f32>> = raw.data.into_iter().map(|d| d.embedding).collect();
+        // Sort by index — VoyageAI may return embeddings out of order
+        let mut data = raw.data;
+        data.sort_by_key(|d| d.index);
+        let mut vectors: Vec<Vec<f32>> = data.into_iter().map(|d| d.embedding).collect();
         if self.client_side_truncation {
             let out = self.output_dims.unwrap();
             vectors = vectors.into_iter().map(|v| l2_normalize(&v[..out])).collect();
@@ -599,9 +645,22 @@ fn run_pipeline_inner(
     let db = create_backend(&db_cfg);
     let cache = db.load_cache()?;
     let provider = create_provider(&embed_cfg)?;
+    let retry = RetryPolicy {
+        max_attempts: embed_cfg.retry_max_attempts,
+        base_delay:   Duration::from_secs(1),
+        max_delay:    Duration::from_secs(60),
+        jitter:       true,
+    };
+    let effective_batch_size = embed_cfg.batch_size
+        .unwrap_or(usize::MAX)
+        .min(provider.max_batch_size())
+        .min(MAX_CHUNKS_PER_BATCH);
 
     let bloom = Arc::clone(&cache.embeddings);
     let cancelled = Arc::new(AtomicBool::new(false));
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
 
     std::thread::scope(|s| {
         let (scanner_tx, scanner_rx) = crossbeam::channel::bounded(500);
@@ -610,12 +669,10 @@ fn run_pipeline_inner(
 
         s.spawn(|| file_scanner(root, &cache, scanner_tx, &cancelled));
         s.spawn(|| parser_stage(scanner_rx, parser_tx, &cancelled));
-        s.spawn(|| {
-            let stats = embed_stage(parser_rx, embed_tx, provider, bloom, retry, cancelled)?;
-            Ok(stats)
-        });
+        let cancelled_embed = Arc::clone(&cancelled);
+        s.spawn(|| embed_stage(parser_rx, embed_tx, provider, bloom, retry, effective_batch_size, cancelled_embed));
         // DB Writer receives bloom via Arc clone in spawn closure:
-        s.spawn(|| db_writer_stage(embed_rx, db, Arc::clone(&cache.embeddings), &cancelled));
+        s.spawn(|| db_writer_stage(embed_rx, db, Arc::clone(&cache.embeddings), cancelled));
     })
 }
 ```
@@ -679,13 +736,9 @@ On pipeline startup, compare the stored bloom's `(provider, model)` metadata (pe
 
 ```rust
 const MAX_CHUNKS_PER_BATCH: usize = 300;   // matches Python embedding_service.py
-const TOKEN_SAFE_LIMIT: usize = 6000;      // pre-flight token ceiling
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct FileKey(u64);
 
 struct EmbedBuffer {
-    pending_files: HashMap<FileKey, PendingFile>,
+    pending_files: HashMap<FileKey, PendingFile>,  // stable file keys (see §1.2)
     batch:         Vec<BatchChunk>,
     stats:         EmbedStats,
     next_key:      u64,
@@ -879,28 +932,36 @@ fn flush_split_batch(
     retry: &RetryPolicy,
     cancelled: &AtomicBool,
 ) -> Result<(), EmbedError> {
-    // Drain current batch, split into two halves, re-queue
+    // Drain current batch, split into halves, re-queue second half
     let mut all = std::mem::take(&mut buffer.batch);
     let mid = all.len() / 2;
 
     if mid == 0 {
-        // Single chunk exceeded limit — skip it
+        // Single chunk exceeded limit — decrement remaining and emit file
+        if let Some(chunk) = all.first() {
+            if let Some(pf) = buffer.pending_files.get_mut(&chunk.file_key) {
+                pf.remaining -= 1;
+                if pf.remaining == 0 {
+                    let pf = buffer.pending_files.remove(&chunk.file_key).unwrap();
+                    let _ = tx.send(pf.file);
+                }
+            }
+        }
         buffer.stats.chunks_failed += 1;
         return Ok(());
     }
 
-    // Brief backoff before retry — avoids hammering the provider
+    // Brief backoff before retry
     sleep_with_jitter(Duration::from_millis(500), true);
 
-    buffer.batch = all.split_off(mid);
-    let first_half = all;
-
-    // Flush first half
-    buffer.batch = first_half;
+    // Split: second_half into buffer.batch, flush first_half
+    let second_half = all.split_off(mid);
+    // all is now [c0..c_mid-1], second_half is [c_mid..]
+    buffer.batch = all; // first half goes to batch for immediate flush
     flush_batch(buffer, tx, provider, retry, cancelled)?;
-
-    // Second half will be flushed on next iteration or capacity trigger
-    // (it's already in buffer.batch from split_off)
+    // After flush, buffer.batch is empty. Put second half back.
+    buffer.batch = second_half;
+    // Second half will be flushed on next capacity trigger or channel drain.
     Ok(())
 }
 ```
@@ -1172,7 +1233,7 @@ mod tests {
 
 ### 11.3 Property Tests
 
-- **Batch ordering invariant**: Regardless of bloom hits/skips, files are emitted in the order they were received from Parser
+- **Batch ordering invariant**: Files are emitted in the order they complete embedding, NOT necessarily in Parser order. `HashMap<FileKey, PendingFile>` has undefined iteration order, so files with fewer chunks may be emitted before earlier files with more chunks. DB Writer receives files in completion order — downstream stages must not rely on file ordering.
 - **Vector count invariant**: Every chunk in the batch after flush has `vector.len() == provider.dimensions()` or `vector.is_none()`
 
 ### 11.4 Mandatory Checks
@@ -1196,3 +1257,5 @@ uv run pytest tests/test_embed_*.py -v       # embed-specific
 | Qwen/Cohere/Ollama native providers | When user demand justifies dedicated structs |
 | Actual tiktoken integration for precise token counting | If estimate_tokens produces too many false skips |
 | Rerank support in Rust | Separate from embed stage; search-path concern |
+| VoyageAI per-batch token budget enforcement | Add `estimated_tokens*texts` sum check before API call against `max_tokens_per_batch` — current pre-flight only checks per-chunk |
+| Bloom sidecar metadata for model-change detection | `fastbloom` serde lacks provider/model fields; a JSON sidecar file (`.chunkhound/db/embeddings.bloom.meta`) storing `(provider, model)` enables §4.5 validation |
