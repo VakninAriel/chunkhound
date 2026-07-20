@@ -1,6 +1,6 @@
 # Embedding Provider Integration — Detailed Design
 
-**Date:** 2026-07-19 · **Revision:** 2 (post-review)
+**Date:** 2026-07-19 · **Revision:** 3 (post-gap-analysis)
 **Scope:** Embed stage only (Phase 1 of Unified Rust + PyO3 Indexing Pipeline)
 **Depends on:** PR #375 (RustDbWriter, Phase 0 DB Writer) merged
 **Wiki reference:** [Unified Rust + PyO3 Indexing Pipeline Design §11](https://github.com/chunkhound/chunkhound/wiki/Unified-Rust-PyO3-Indexing-Pipeline-Design#11-embedding-provider-integration)
@@ -9,14 +9,14 @@
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Concurrency model | Single `std::thread`, sequential | Simplicity; backpressure from DB Writer throttles naturally |
+| Concurrency model | Worker pool: `N` threads (default: `provider.recommended_concurrency()`) with coordinator thread for batch distribution and result merge | Matches Python `asyncio.Semaphore` concurrency (8 OpenAI, 40 VoyageAI). Preserves per-batch error isolation and backpressure. |
 | Providers | OpenAI (incl. Azure) + VoyageAI, extensible | Matches Python provider support; trait designed so adding a provider is self-contained |
 | Rate limiting | Retry-only (reactive) | Honor `Retry-After` header + exponential backoff; no proactive token bucket |
 | Rate limit semantics | `Retry-After` does not compound; exponential backoff only for non-429 | 429 is a provider ceiling, not transient error |
 | Batch boundary | Per-provider max capacity, capped at 300 chunks | Matches Python `MAX_CHUNKS_PER_BATCH = 300` empirical limit; time-window deferred |
 | Bloom key | `(content_hash, provider, model, output_dimensions)` | Distinguishes same-model-different-dims (matryoshka) |
 | Dimension truncation | Provider-internal; embed stage sees only output dim | Preserves existing matryoshka flow unchanged |
-| Error isolation | Batch-level failure → retry; if exhausted, mark `vector=None`, pipeline shuts down | Embed APIs reliable; retries handle transients |
+| Error isolation | Per-batch failure → retry; if exhausted, mark batch chunks `vector=None`, emit file, pipeline continues | Matches Python `asyncio.gather(return_exceptions=True)`: one failing batch does not abort the entire pipeline. Fatal errors (Auth) still abort. |
 | Retry attempts | Default 3 | Matches Python `retry_attempts=3` |
 | Token handling | Token-aware batching with 6000-token safe ceiling; "context length" `BadRequest` is splittable | Prevents one large chunk from crashing pipeline |
 | Stable file key | Monotonically incrementing `FileKey` (u64), not Vec index | Vec indices invalidated by `retain()` |
@@ -28,20 +28,37 @@
 ### 1.1 Pipeline Position
 
 ```
-Parser (rayon)          Embed (1 thread)         DB Writer (1 thread)
-    │                        │                        │
-    │  ParsedFile            │  EmbeddedFile          │
-    ├───────────────────────>├───────────────────────>│
-    │  crossbeam bounded     │  crossbeam bounded     │
-    │  (max(50, N×16))      │  (100)                 │
-    │                        │                        │
-    │              CacheSnapshot                      │
-    │              ┌──────────────────┐               │
-    │              │ bloom (lock-free)│ ← Embed reads │
-    │              └──────────────────┘               │
+Parser (rayon)       Coordinator (1 thread)     DB Writer (1 thread)
+    │                       │                        │
+    │  ParsedFile           │  EmbeddedFile          │
+    ├──────────────────────>├───────────────────────>│
+    │  crossbeam bounded    │  crossbeam bounded     │
+    │  (max(50, N×16))     │  (100)                 │
+    │                       │                        │
+    │           ┌────────────────────────┐           │
+    │           │ Worker 0 ── embed_batch│           │
+    │           │ Worker 1 ── embed_batch│           │
+    │           │ Worker 2 ── embed_batch│  (N =    │
+    │           │ ...                    │   provider│
+    │           │ Worker N-1             │   .rec..) │
+    │           └────────────────────────┘           │
+    │                       ▲                        │
+    │              work_tx  │ result_rx              │
+    │                       │                        │
+    │              CacheSnapshot                     │
+    │              ┌──────────────────┐              │
+    │              │ bloom (lock-free)│ ← Workers rd │
+    │              └──────────────────┘              │
 ```
 
-The embed thread owns its `Box<dyn EmbeddingProvider>` (wrapping `reqwest::blocking::Client`). It holds no DB connection and no Python references.
+The **coordinator thread** owns the `EmbedBuffer` (pending files, batch accumulation). It reads `ParsedFile`s from the Parser channel, builds batches, and distributes work items to worker threads over a `crossbeam` bounded channel (`work_tx`). Workers each own a cloned `Arc<dyn EmbeddingProvider>` (the underlying `reqwest::blocking::Client` is cheap to clone). Workers send `BatchResult` structs back on `result_rx`. The coordinator merges results into `pending_files` and emits completed `EmbeddedFile`s to the DB Writer.
+
+Worker count defaults to `provider.recommended_concurrency()`:
+- **OpenAI**: 8 (matches Python `openai_provider.py` default `max_concurrent_batches`)
+- **VoyageAI**: 40 (matches Python `voyageai_provider.py` `RECOMMENDED_CONCURRENCY`)
+- **Custom / unknown**: 1 (sequential fallback)
+
+Workers do not hold DB connections or Python references.
 
 ### 1.2 Stable File Keys
 
@@ -61,59 +78,61 @@ struct EmbedBuffer {
 
 `next_key` increments monotonically. `HashMap` survives `retain()`-style removal without index shifting.
 
-### 1.3 Main Loop
+### 1.3 Coordinator Loop
+
+The coordinator is the sole owner of `EmbedBuffer`. It reads `ParsedFile`s, accumulates chunks into batches, and dispatches work to the worker pool via `work_tx`. Completed results are merged back from `result_rx`.
 
 ```rust
-fn embed_stage(
+fn coordinator_thread(
     rx: Receiver<ParsedFile>,
     tx: Sender<EmbeddedFile>,
-    provider: Box<dyn EmbeddingProvider>,
+    work_tx: Sender<WorkItem>,
+    result_rx: Receiver<BatchResult>,
+    provider: Arc<dyn EmbeddingProvider>,
     bloom: Arc<AtomicBloomFilter>,
     retry: RetryPolicy,
-    effective_batch_size: usize,
     cancelled: Arc<AtomicBool>,
+    progress_tx: Sender<EmbedProgress>,
 ) -> Result<EmbedStats, EmbedError> {
     let mut buffer = EmbedBuffer::new();
+    let effective_batch_size = provider.max_batch_size().min(MAX_CHUNKS_PER_BATCH);
+    let mut next_batch_id: usize = 0;
 
     for parsed in rx.iter() {
         // 1. Pass-through for Deleted/Error
         if matches!(parsed.kind, FileEventKind::Deleted | FileEventKind::Error) {
-            tx.send(EmbeddedFile::from_parsed(&parsed, &provider))?;
+            tx.send(EmbeddedFile::from_parsed(&parsed, &*provider))?;
             continue;
         }
 
         // 2. Build intermediate file with mutable vector slots
-        let mut file = EmbeddedFile::from_parsed(&parsed, &provider);
+        let mut file = EmbeddedFile::from_parsed(&parsed, &*provider);
         let mut new_chunks: usize = 0;
-
-        let mut key = FileKey(buffer.next_key);
+        let file_key = FileKey(buffer.next_key);
         buffer.next_key += 1;
 
         for (chunk_idx, chunk) in parsed.chunks.iter().enumerate() {
             if chunk.text.trim().is_empty() || chunk.content_hash.is_empty() {
-                continue;  // skip empty / legacy-hashless chunks
+                continue;
             }
-
-            // Replace empty/whitespace-only text with placeholder (matches Python behavior)
             let text = if chunk.text.trim().is_empty() { "[EMPTY]".to_string() } else { chunk.text.clone() };
 
-            // Token check: skip chunks exceeding provider context window
             let token_estimate = estimate_tokens(&chunk.text);
             if token_estimate > provider.max_tokens_per_chunk() {
-                continue;  // oversized chunk — logged, skipped, counted
+                continue;
             }
 
-            let key = bloom_key(&chunk.content_hash, provider.name(), provider.model(), provider.dimensions());
-            if bloom.contains(&key) {
+            let bloom_k = bloom_key(&chunk.content_hash, provider.name(), provider.model(), provider.dimensions());
+            if bloom.contains(&bloom_k) {
                 buffer.stats.chunks_skipped += 1;
                 continue;
             }
 
-            let file_key = buffer.next_key;
             buffer.batch.push(BatchChunk {
-                file_key: key,
+                file_key,
                 chunk_idx,
-                text,                                 // may be "[EMPTY]" for empty chunks
+                text,
+                content_hash: chunk.content_hash.clone(),
             });
             buffer.stats.chunks_checked += 1;
             new_chunks += 1;
@@ -122,29 +141,49 @@ fn embed_stage(
         if new_chunks == 0 {
             tx.send(file)?;
         } else {
-            buffer.pending_files.insert(key, PendingFile { file, remaining: new_chunks });
+            buffer.pending_files.insert(file_key, PendingFile { file, remaining: new_chunks });
         }
 
-        // 3. Flush when batch reaches capacity
+        // 3. Flush when batch reaches capacity — send to worker pool
         if buffer.batch.len() >= effective_batch_size {
-            flush_batch(&mut buffer, &tx, &*provider, &retry, &cancelled)?;
+            let batch = std::mem::take(&mut buffer.batch);
+            work_tx.send(WorkItem { batch_id: next_batch_id, batch, attempt: 1 })?;
+            next_batch_id += 1;
+        }
+
+        // 4. Non-blocking merge of completed results
+        while let Ok(result) = result_rx.try_recv() {
+            merge_batch_result(result, &mut buffer, &tx, &cancelled)?;
+        }
+
+        // 5. Progress every 50 batches (matches Python)
+        if buffer.stats.batches_sent % 50 == 0 {
+            let _ = progress_tx.send(EmbedProgress {
+                batches_sent: buffer.stats.batches_sent,
+                embeddings_sent: buffer.stats.embeddings_sent,
+                chunks_failed: buffer.stats.chunks_failed,
+            });
         }
 
         if cancelled.load(Ordering::Relaxed) { break; }
     }
 
-    // 4. Final flush + error-safe drain: safety net runs before error propagation
-    let result = if !buffer.batch.is_empty() {
-        flush_batch(&mut buffer, &tx, &*provider, &retry, &cancelled)
-    } else {
-        Ok(())
-    };
-    // Safety net: emit any remaining pending files, ignore error (channel may be dead)
+    // 6. Final flush: send remaining batches to workers
+    if !buffer.batch.is_empty() {
+        work_tx.send(WorkItem { batch_id: next_batch_id, batch: std::mem::take(&mut buffer.batch), attempt: 1 })?;
+    }
+    drop(work_tx); // signal workers to exit after draining
+
+    // 7. Drain all remaining results
+    while let Ok(result) = result_rx.recv() {
+        merge_batch_result(result, &mut buffer, &tx, &cancelled)?;
+    }
+
+    // 8. Safety-net drain
     for (_, pf) in buffer.pending_files.drain() {
         let _ = tx.send(pf.file);
     }
     drop(tx);
-    result?;
     Ok(buffer.stats)
 }
 ```
@@ -159,12 +198,148 @@ fn embed_stage(
 
 ### 1.5 Shutdown on Error
 
-On unrecoverable error (retries exhausted or fatal):
-1. Sets `cancelled.store(true, Ordering::Relaxed)`
-2. Marks un-flushed batch chunks as `vector=None`
-3. Emits all pending files with partial vectors
-4. Drops output Sender
-5. Propagates error up through `std::thread::scope`
+The coordinator distinguishes **fatal** from **non-fatal** errors:
+
+| Error type | Examples | Response |
+|---|---|---|
+| Fatal | `Auth`, `BadRequest` (non-context-length), `Cancelled` | Set `cancelled=true`, safety-net drain, propagate error up through `std::thread::scope` |
+| Non-fatal | Retries exhausted on `Http`, `RateLimited`, `Provider` | Mark all chunks in the failed batch as `vector=None`, increment `stats.chunks_failed`, **pipeline continues** |
+
+This matches Python's `asyncio.gather(return_exceptions=True)`: one failing request does not abort the entire pipeline. Only authentication failures (which affect all future requests) are treated as fatal.
+
+### 1.6 Worker Pool
+
+```rust
+struct WorkItem {
+    batch_id: usize,
+    batch: Vec<BatchChunk>,
+}
+
+struct BatchResult {
+    batch_id: usize,
+    vectors: Result<Vec<Vec<f32>>, EmbedError>,
+}
+
+fn worker_thread(
+    work_rx: Receiver<WorkItem>,
+    result_tx: Sender<BatchResult>,
+    provider: Arc<dyn EmbeddingProvider>,
+    retry: RetryPolicy,
+    cancelled: Arc<AtomicBool>,
+) {
+    for work in work_rx.iter() {
+        if cancelled.load(Ordering::Relaxed) { break; }
+        let texts: Vec<String> = work.batch.iter().map(|c| c.text.clone()).collect();
+        let vectors = embed_with_retry_or_split(&*provider, &texts, &retry, &cancelled);
+        let _ = result_tx.send(BatchResult {
+            batch_id: work.batch_id,
+            vectors,
+        });
+    }
+}
+
+/// Try embed_batch. On ContextLengthExceeded, split batch in half and retry
+/// recursively. Single oversized chunk → return Err (coordinator marks as failed).
+fn embed_with_retry_or_split(
+    provider: &dyn EmbeddingProvider,
+    texts: &[String],
+    retry: &RetryPolicy,
+    cancelled: &AtomicBool,
+) -> Result<Vec<Vec<f32>>, EmbedError> {
+    match embed_with_retry(provider, texts, retry, cancelled) {
+        Ok(v) => Ok(v),
+        Err(EmbedError::ContextLengthExceeded(_)) => {
+            if texts.len() <= 1 {
+                return Err(EmbedError::ContextLengthExceeded(
+                    "single chunk exceeds context limit".into()
+                ));
+            }
+            let mid = texts.len() / 2;
+            let mut left = embed_with_retry_or_split(provider, &texts[..mid], retry, cancelled)?;
+            let right = embed_with_retry_or_split(provider, &texts[mid..], retry, cancelled)?;
+            left.extend(right);
+            Ok(left)
+        }
+        Err(e) => Err(e),
+    }
+}
+```
+
+**Worker spawning** (inside `run_pipeline_inner`):
+
+```rust
+let n_workers = provider.recommended_concurrency();
+let (work_tx, work_rx) = crossbeam::channel::bounded::<WorkItem>(n_workers * 2);
+let (result_tx, result_rx) = crossbeam::channel::bounded::<BatchResult>(n_workers * 2);
+let provider = Arc::from(provider); // Box<dyn> → Arc<dyn>
+
+for i in 0..n_workers {
+    let work_rx = work_rx.clone();
+    let result_tx = result_tx.clone();
+    let provider = Arc::clone(&provider);
+    let retry = retry.clone();
+    let cancelled = Arc::clone(&cancelled);
+    s.spawn(move || worker_thread(work_rx, result_tx, provider, retry, cancelled));
+}
+drop(result_tx); // workers hold clones; coordinator reads from result_rx
+```
+
+**Key invariants:**
+- `pending_files` lives only in the coordinator (no cross-thread mutation)
+- Workers are stateless — they receive a batch, call `embed_batch`, return vectors
+- `bloom` is read-only and `Arc<AtomicBloomFilter>` — safe to share across workers
+- Order preservation: files emit in completion order, not Parser order (same as Python)
+
+### 1.7 Merge Result
+
+```rust
+fn merge_batch_result(
+    result: BatchResult,
+    buffer: &mut EmbedBuffer,
+    tx: &Sender<EmbeddedFile>,
+    cancelled: &AtomicBool,
+) -> Result<(), EmbedError> {
+    match result.vectors {
+        Ok(vectors) => {
+            // Scatter vectors back to pending files
+            for (chunk, vector) in result.batch.iter().zip(vectors.into_iter()) {
+                if let Some(pf) = buffer.pending_files.get_mut(&chunk.file_key) {
+                    pf.file.chunks[chunk.chunk_idx].vector = Some(vector);
+                    pf.remaining -= 1;
+                    if pf.remaining == 0 {
+                        let pf = buffer.pending_files.remove(&chunk.file_key).unwrap();
+                        tx.send(pf.file)?;
+                    }
+                }
+            }
+            buffer.stats.embeddings_sent += result.batch.len() as u64;
+            buffer.stats.batches_sent += 1;
+        }
+        Err(e) if is_fatal(&e) => {
+            cancelled.store(true, Ordering::Relaxed);
+            return Err(e);
+        }
+        Err(_) => {
+            // Non-fatal: mark all chunks in this batch as failed
+            for chunk in &result.batch {
+                if let Some(pf) = buffer.pending_files.get_mut(&chunk.file_key) {
+                    pf.remaining -= 1;
+                    if pf.remaining == 0 {
+                        let pf = buffer.pending_files.remove(&chunk.file_key).unwrap();
+                        tx.send(pf.file)?;
+                    }
+                }
+            }
+            buffer.stats.chunks_failed += result.batch.len() as u64;
+        }
+    }
+    Ok(())
+}
+
+fn is_fatal(e: &EmbedError) -> bool {
+    matches!(e, EmbedError::Auth(_) | EmbedError::BadRequest(_) | EmbedError::Cancelled)
+}
+```
 
 ---
 
@@ -194,10 +369,9 @@ pub trait EmbeddingProvider: Send {
     /// sending chunks that would trigger a "context length exceeded" error.
     fn max_tokens_per_chunk(&self) -> usize;
 
-    /// Recommended number of concurrent in-flight batches. Defaults to 1
-    /// (sequential). Providers that support higher concurrency (e.g. OpenAI
-    /// allows many parallel requests) can override. Kept for future use;
-    /// the current embed stage is single-threaded.
+    /// Recommended number of concurrent worker threads. Defaults to 1.
+    /// OpenAI overrides to 8; VoyageAI overrides to 40. These match the
+    /// Python provider defaults for `max_concurrent_batches`.
     fn recommended_concurrency(&self) -> usize { 1 }
 }
 ```
@@ -351,6 +525,10 @@ const OPENAI_MODEL_CONFIG: phf::Map<&'static str, OpenAiModelInfo> = phf_map! {
     "text-embedding-3-small"  => OpenAiModelInfo { native_dims: 1536, max_tokens: 8191, matryoshka: true },
     "text-embedding-3-large"  => OpenAiModelInfo { native_dims: 3072, max_tokens: 8191, matryoshka: true },
     "text-embedding-ada-002"  => OpenAiModelInfo { native_dims: 1536, max_tokens: 8191, matryoshka: false },
+    // Qwen3 embedding models (OpenAI-compatible API via Ollama / DashScope)
+    "qwen3-embedding-0.6b"    => OpenAiModelInfo { native_dims: 3584, max_tokens: 8192, matryoshka: false },
+    "qwen3-embedding-4b"      => OpenAiModelInfo { native_dims: 3584, max_tokens: 8192, matryoshka: false },
+    "qwen3-embedding-8b"      => OpenAiModelInfo { native_dims: 3584, max_tokens: 8192, matryoshka: false },
 };
 ```
 
@@ -367,6 +545,7 @@ pub struct OpenAiProvider {
     model_info:             OpenAiModelInfo,
     is_azure:               bool,
     api_version:            Option<String>,
+    discovered_native_dims: AtomicUsize,  // 0 = not yet discovered; runtime learning for unknown/custom models
 }
 
 impl OpenAiProvider {
@@ -413,6 +592,7 @@ impl OpenAiProvider {
             model_info,
             is_azure,
             api_version: cfg.api_version.clone(),
+            discovered_native_dims: AtomicUsize::new(0),
         })
     }
 }
@@ -457,6 +637,13 @@ impl EmbeddingProvider for OpenAiProvider {
             let out = self.output_dims.unwrap();
             vectors = vectors.into_iter().map(|v| l2_normalize(&v[..out])).collect();
         }
+        // Runtime dimension discovery for unknown/custom models.
+        if let Some(first) = vectors.first() {
+            let dim = first.len();
+            if dim > 0 && self.discovered_native_dims.load(Ordering::Relaxed) == 0 {
+                self.discovered_native_dims.store(dim, Ordering::Relaxed);
+            }
+        }
         Ok(vectors)
     }
 
@@ -465,8 +652,13 @@ impl EmbeddingProvider for OpenAiProvider {
         if self.is_azure { "azure_openai" } else { "openai" }
     }
     fn model(&self) -> &str { &self.model }
-    fn dimensions(&self) -> usize { self.output_dims.unwrap_or(self.model_info.native_dims) }
+    fn dimensions(&self) -> usize {
+        let discovered = self.discovered_native_dims.load(Ordering::Relaxed);
+        if discovered > 0 { discovered }
+        else { self.output_dims.unwrap_or(self.model_info.native_dims) }
+    }
     fn max_tokens_per_chunk(&self) -> usize { self.model_info.max_tokens }
+    fn recommended_concurrency(&self) -> usize { 8 }  // matches Python default max_concurrent_batches
 }
 
 #[derive(Deserialize)]
@@ -517,6 +709,7 @@ pub struct VoyageAiProvider {
     output_dims:            Option<usize>,
     client_side_truncation: bool,
     model_info:             VoyageModelInfo,
+    discovered_native_dims: AtomicUsize,  // 0 = not yet discovered; runtime learning for unknown models
 }
 
 impl VoyageAiProvider {
@@ -556,6 +749,7 @@ impl VoyageAiProvider {
             output_dims: cfg.output_dims,
             client_side_truncation: cfg.client_side_truncation,
             model_info,
+            discovered_native_dims: AtomicUsize::new(0),
         })
     }
 }
@@ -594,14 +788,28 @@ impl EmbeddingProvider for VoyageAiProvider {
             let out = self.output_dims.unwrap();
             vectors = vectors.into_iter().map(|v| l2_normalize(&v[..out])).collect();
         }
+        // Runtime dimension discovery for unknown/custom models.
+        // Python voyageai_provider.py does the same: _discovered_native_dims
+        // is set from the first successful embed() response.
+        if let Some(first) = vectors.first() {
+            let dim = first.len();
+            if dim > 0 && self.discovered_native_dims.load(Ordering::Relaxed) == 0 {
+                self.discovered_native_dims.store(dim, Ordering::Relaxed);
+            }
+        }
         Ok(vectors)
     }
 
     fn max_batch_size(&self) -> usize { Self::MAX_BATCH }
     fn name(&self) -> &str { "voyageai" }
     fn model(&self) -> &str { &self.model }
-    fn dimensions(&self) -> usize { self.output_dims.unwrap_or(self.model_info.native_dims) }
+    fn dimensions(&self) -> usize {
+        let discovered = self.discovered_native_dims.load(Ordering::Relaxed);
+        if discovered > 0 { discovered }
+        else { self.output_dims.unwrap_or(self.model_info.native_dims) }
+    }
     fn max_tokens_per_chunk(&self) -> usize { self.model_info.max_tokens_per_chunk }
+    fn recommended_concurrency(&self) -> usize { 40 }  // matches Python RECOMMENDED_CONCURRENCY
 }
 
 #[derive(Deserialize)]
@@ -662,17 +870,43 @@ fn run_pipeline_inner(
         .map(|n| n.get())
         .unwrap_or(4);
 
+    // Progress channel (Rust → Python callback)
+    let (progress_tx, progress_rx) = crossbeam::channel::bounded::<EmbedProgress>(100);
+
     std::thread::scope(|s| {
         let (scanner_tx, scanner_rx) = crossbeam::channel::bounded(500);
         let (parser_tx, parser_rx) = crossbeam::channel::bounded(max(50, num_cpus * 16));
         let (embed_tx, embed_rx) = crossbeam::channel::bounded(100);
 
+        // Worker pool channels
+        let n_workers = provider.recommended_concurrency();
+        let (work_tx, work_rx) = crossbeam::channel::bounded::<WorkItem>(n_workers * 2);
+        let (result_tx, result_rx) = crossbeam::channel::bounded::<BatchResult>(n_workers * 2);
+        let provider = Arc::from(provider);
+
+        // Spawn workers
+        for _ in 0..n_workers {
+            let work_rx = work_rx.clone();
+            let result_tx = result_tx.clone();
+            let provider = Arc::clone(&provider);
+            let retry = retry.clone();
+            let cancelled = Arc::clone(&cancelled);
+            s.spawn(move || worker_thread(work_rx, result_tx, provider, retry, cancelled));
+        }
+        drop(result_tx); // coordinator owns result_rx exclusively
+
         s.spawn(|| file_scanner(root, &cache, scanner_tx, &cancelled));
         s.spawn(|| parser_stage(scanner_rx, parser_tx, &cancelled));
         let cancelled_embed = Arc::clone(&cancelled);
-        s.spawn(|| embed_stage(parser_rx, embed_tx, provider, bloom, retry, effective_batch_size, cancelled_embed));
+        let provider = Arc::clone(&provider);
+        s.spawn(|| coordinator_thread(
+            parser_rx, embed_tx, work_tx, result_rx,
+            provider, bloom, retry, cancelled_embed, progress_tx,
+        ));
         // DB Writer receives bloom via Arc clone in spawn closure:
         s.spawn(|| db_writer_stage(embed_rx, db, Arc::clone(&cache.embeddings), cancelled));
+
+        Ok(())
     })
 }
 ```
@@ -764,57 +998,19 @@ struct BatchChunk {
 | Channel drain | `rx.iter()` exits | any size ≥ 1 |
 | Cancellation | `cancelled.load(Relaxed)` → drain with `None` vectors | any size ≥ 1 |
 
-### 5.3 `flush_batch()`
+### 5.3 Sending to Worker Pool
+
+When a flush trigger fires, the coordinator moves the accumulated batch off `buffer.batch` and sends it as a `WorkItem` to the worker pool:
 
 ```rust
-fn flush_batch(
-    buffer: &mut EmbedBuffer,
-    tx: &Sender<EmbeddedFile>,
-    provider: &dyn EmbeddingProvider,
-    retry: &RetryPolicy,
-    cancelled: &AtomicBool,
-) -> Result<(), EmbedError> {
-    if buffer.batch.is_empty() { return Ok(()); }
-
-    // 1. Extract text, call provider with retry
-    let texts: Vec<String> = buffer.batch.iter().map(|c| c.text.clone()).collect();
-    let vectors = match embed_with_retry(provider, &texts, retry, cancelled) {
-        Ok(v) => v,
-        Err(EmbedError::ContextLengthExceeded(_)) => {
-            // Split batch in half and retry each half individually.
-            // If a single chunk exceeds the provider's limit, it was already
-            // filtered by token estimation — this path handles cumulative
-            // token overflow when batching many medium-length chunks.
-            return flush_split_batch(buffer, tx, provider, retry, cancelled);
-        }
-        Err(e) => return Err(e),
-    };
-
-    // 2. Scatter vectors back into pending_files
-    let chunks: Vec<BatchChunk> = buffer.batch.drain(..).collect();
-    for (i, chunk) in chunks.iter().enumerate() {
-        let pf = buffer.pending_files.get_mut(&chunk.file_key)
-            .expect("file_key must exist in pending_files");
-        pf.file.chunks[chunk.chunk_idx].vector = Some(vectors[i].clone());
-        pf.remaining -= 1;
-    }
-
-    // 3. Emit completed files via manual drain (not retain(), to propagate errors)
-    let completed: Vec<FileKey> = buffer.pending_files.iter()
-        .filter(|(_, pf)| pf.remaining == 0)
-        .map(|(k, _)| *k)
-        .collect();
-    for key in completed {
-        let pf = buffer.pending_files.remove(&key)
-            .expect("key just collected from iter");
-        tx.send(pf.file)?;
-    }
-
-    buffer.stats.embeddings_sent += texts.len() as u64;
-    buffer.stats.batches_sent += 1;
-    Ok(())
+if buffer.batch.len() >= effective_batch_size {
+    let batch = std::mem::take(&mut buffer.batch);
+    work_tx.send(WorkItem { batch_id: next_batch_id, batch })?;
+    next_batch_id += 1;
 }
 ```
+
+The worker executes `embed_with_retry_or_split()` (§6.3) and returns `BatchResult` on `result_rx`. The coordinator merges results in `merge_batch_result()` (§1.7).
 
 ### 5.4 All-Bloom-Hit Files
 
@@ -822,28 +1018,28 @@ A file where every chunk hits the bloom or is skipped: `new_chunks == 0` → emi
 
 ### 5.5 Multi-Batch Files
 
-A file with more new chunks than `effective_batch_size` spans multiple flushes. `FileKey` + `remaining` counter ensures it stays in `pending_files` across flushes until `remaining == 0`.
+A file with more new chunks than `effective_batch_size` spans multiple worker dispatches. `FileKey` + `remaining` counter ensures it stays in `pending_files` across dispatches until `remaining == 0`.
 
 ### 5.6 Error-Safe Drain
 
 On cancellation or final drain:
-1. All un-flushed batch chunks get `vector=None` scattered into their files
+1. All un-dispatched batch chunks get `vector=None` scattered into their files
 2. All `pending_files` are emitted (some with partial vectors)
 3. `tx` is dropped
 
 The safety-net drain runs BEFORE error propagation to ensure DB Writer always receives the drop signal:
 
 ```rust
-// Final flush (may error)
-let result = flush_batch(&mut buffer, &tx, &*provider, &retry, &cancelled);
+// Drain any in-flight results before shutdown
+while let Ok(result) = result_rx.recv_timeout(Duration::from_secs(5)) {
+    let _ = merge_batch_result(result, &mut buffer, &tx, &cancelled);
+}
 
-// Safety net ALWAYS runs, regardless of error
+// Emit remaining pending files (some may have partial vectors)
 for (_, pf) in buffer.pending_files.drain() {
-    let _ = tx.send(pf.file);  // ignore error — channel may be dead
+    let _ = tx.send(pf.file);
 }
 drop(tx);
-
-result?; // propagate error after drain
 ```
 
 ---
@@ -870,7 +1066,6 @@ fn embed_with_retry(
     texts: &[String],
     policy: &RetryPolicy,
     cancelled: &AtomicBool,
-    stats: &mut EmbedStats,          // caller-owned; mutated for retries/failures
 ) -> Result<Vec<Vec<f32>>, EmbedError> {
     let mut attempt: u32 = 0;
     let mut delay = policy.base_delay;
@@ -889,13 +1084,10 @@ fn embed_with_retry(
                 return Ok(vectors);
             }
             Err(e) => {
-                stats.retries += 1;
-
                 if matches!(&e, EmbedError::ContextLengthExceeded(_)) {
                     return Err(e);  // propagate for split-and-retry
                 }
                 if !is_retryable(&e) || attempt >= policy.max_attempts {
-                    stats.chunks_failed += texts.len() as u64;
                     return Err(e);
                 }
                 let wait = if let EmbedError::RateLimited { retry_after: Some(ra) } = &e {
@@ -924,55 +1116,43 @@ fn is_retryable(e: &EmbedError) -> bool {
 
 ### 6.3 Batch Splitting on `ContextLengthExceeded`
 
+In the worker pool, `ContextLengthExceeded` is handled by `embed_with_retry_or_split`, which recursively halves the batch until each half succeeds or a single chunk is isolated as too large:
+
 ```rust
-fn flush_split_batch(
-    buffer: &mut EmbedBuffer,
-    tx: &Sender<EmbeddedFile>,
+fn embed_with_retry_or_split(
     provider: &dyn EmbeddingProvider,
+    texts: &[String],
     retry: &RetryPolicy,
     cancelled: &AtomicBool,
-) -> Result<(), EmbedError> {
-    // Drain current batch, split into halves, re-queue second half
-    let mut all = std::mem::take(&mut buffer.batch);
-    let mid = all.len() / 2;
-
-    if mid == 0 {
-        // Single chunk exceeded limit — decrement remaining and emit file
-        if let Some(chunk) = all.first() {
-            if let Some(pf) = buffer.pending_files.get_mut(&chunk.file_key) {
-                pf.remaining -= 1;
-                if pf.remaining == 0 {
-                    let pf = buffer.pending_files.remove(&chunk.file_key).unwrap();
-                    let _ = tx.send(pf.file);
-                }
+) -> Result<Vec<Vec<f32>>, EmbedError> {
+    match embed_with_retry(provider, texts, retry, cancelled) {
+        Ok(v) => Ok(v),
+        Err(EmbedError::ContextLengthExceeded(_)) => {
+            if texts.len() <= 1 {
+                return Err(EmbedError::ContextLengthExceeded(
+                    "single chunk exceeds context limit".into()
+                ));
             }
+            let mid = texts.len() / 2;
+            let mut left = embed_with_retry_or_split(provider, &texts[..mid], retry, cancelled)?;
+            let right = embed_with_retry_or_split(provider, &texts[mid..], retry, cancelled)?;
+            left.extend(right);
+            Ok(left)
         }
-        buffer.stats.chunks_failed += 1;
-        return Ok(());
+        Err(e) => Err(e),
     }
-
-    // Brief backoff before retry
-    sleep_with_jitter(Duration::from_millis(500), true);
-
-    // Split: second_half into buffer.batch, flush first_half
-    let second_half = all.split_off(mid);
-    // all is now [c0..c_mid-1], second_half is [c_mid..]
-    buffer.batch = all; // first half goes to batch for immediate flush
-    flush_batch(buffer, tx, provider, retry, cancelled)?;
-    // After flush, buffer.batch is empty. Put second half back.
-    buffer.batch = second_half;
-    // Second half will be flushed on next capacity trigger or channel drain.
-    Ok(())
 }
 ```
+
+Single oversized chunks (already filtered by pre-flight token estimation) return `Err` to the worker, which forwards to the coordinator. The coordinator marks that chunk’s file as failed (`vector=None`) and continues.
 
 ### 6.4 Error Propagation
 
 | Failure | Embed Stage Response |
 |---|---|
 | Single batch, retry succeeds | Log warning, continue. `stats.retries` incremented. |
-| Batch, retries exhausted | Set `cancelled=true`. Mark batch chunks `vector=None`. Emit pending. Drop tx. |
-| Batch, fatal error (Auth) | Same drain-and-exit. |
+| Batch, retries exhausted (non-fatal) | Mark batch chunks `vector=None`, increment `stats.chunks_failed`, **pipeline continues**. Matches Python `asyncio.gather(return_exceptions=True)`. |
+| Batch, fatal error (Auth, BadRequest) | Set `cancelled=true`, safety-net drain, drop tx, propagate error. |
 | `ContextLengthExceeded` | Split batch in half, retry each. Single oversized chunk → skip. |
 | Cancellation | Safety-net drain → drop tx → exit. |
 
@@ -1133,7 +1313,14 @@ pub struct EmbedStats {
     pub embeddings_sent: u64,   // chunks sent to API
     pub batches_sent: u64,      // API calls made
     pub retries: u64,           // incremented in retry loop (each attempt after first)
-    pub chunks_failed: u64,     // chunks where embedding failed after all retries
+    pub chunks_failed: u64,     // chunks where embedding failed after all retries or non-fatal batch errors
+}
+
+#[derive(Debug, Clone)]
+pub struct EmbedProgress {
+    pub batches_sent: u64,
+    pub embeddings_sent: u64,
+    pub chunks_failed: u64,
 }
 ```
 
@@ -1141,13 +1328,13 @@ pub struct EmbedStats {
 
 ```
 src/embed/
-├── mod.rs          # embed_stage(), EmbedBuffer, flush_batch(), estimate_tokens()
+├── mod.rs          # coordinator_thread(), worker_thread(), merge_batch_result()
 ├── provider.rs     # EmbeddingProvider trait, create_provider(), EmbedConfig, classify_response()
-├── openai.rs       # OpenAiProvider (incl. Azure)
+├── openai.rs       # OpenAiProvider (incl. Azure + Qwen3)
 ├── voyageai.rs     # VoyageAiProvider
-├── retry.rs        # RetryPolicy, embed_with_retry(), is_retryable(), sleep_with_jitter()
-├── types.rs        # EmbeddedFile, EmbeddedChunk, EmbedStats, FileKey, BatchChunk, etc.
-└── utils.rs        # l2_normalize(), bloom_key()
+├── retry.rs        # RetryPolicy, embed_with_retry(), embed_with_retry_or_split(), is_retryable()
+├── types.rs        # EmbeddedFile, EmbeddedChunk, EmbedStats, FileKey, BatchChunk, WorkItem, BatchResult, EmbedProgress
+└── utils.rs        # l2_normalize(), bloom_key(), estimate_tokens()
 ```
 
 ---
@@ -1321,7 +1508,7 @@ per batch, occasional warnings/errors).
 | Item | When |
 |---|---|
 | Time-window flush (`embed_flush_timeout_seconds`) | If sparse repos become a problem |
-| Concurrent HTTP requests via thread pool | If single-thread throughput is bottleneck |
+| Worker pool auto-tuning based on batch latency | Adjust `recommended_concurrency` dynamically if batch RTT is high |
 | Bloom overflow auto-rebuild with 2× capacity | When load factor tracking is added to fastbloom |
 | Qwen/Cohere/Ollama native providers | When user demand justifies dedicated structs |
 | Actual tiktoken integration for precise token counting | If estimate_tokens produces too many false skips |
