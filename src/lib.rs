@@ -6,6 +6,7 @@
 mod bloom;
 mod db;
 mod db_writer;
+mod embed;
 mod error;
 mod types;
 
