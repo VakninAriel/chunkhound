@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embedding Provider Integration — Revised Design (Thin-Rust)</title>
+<style>
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #faf9f7;
+  --bg-card: #ffffff;
+  --text: #1a1a1a;
+  --text-muted: #6b6b6b;
+  --border: #e2ddd6;
+  --accent: #2563eb;
+  --accent-muted: #dbeafe;
+  --code-bg: #f4f2ef;
+  --code-border: #e2ddd6;
+  --table-stripe: #f8f6f3;
+  --table-header: #f0ede8;
+  --tag-built: #ecfdf5;
+  --tag-built-text: #065f46;
+  --tag-new: #fef3c7;
+  --tag-new-text: #92400e;
+  --shadow: 0 1px 3px rgba(0,0,0,0.06);
+  --radius: 6px;
+  --sidebar-w: 260px;
+  --font-mono: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', 'Cascadia Code', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a1a;
+    --bg-card: #242424;
+    --text: #e5e0d8;
+    --text-muted: #9a958c;
+    --border: #3a352e;
+    --accent: #60a5fa;
+    --accent-muted: #1e3a5f;
+    --code-bg: #2a2824;
+    --code-border: #3a352e;
+    --table-stripe: #282622;
+    --table-header: #2e2b26;
+    --tag-built: #064e3b;
+    --tag-built-text: #6ee7b7;
+    --tag-new: #78350f;
+    --tag-new-text: #fcd34d;
+    --shadow: 0 1px 3px rgba(0,0,0,0.25);
+  }
+}
+
+html { scroll-behavior: smooth; scroll-padding-top: 20px; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.68;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout: Sidebar + Content ── */
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  padding: 24px 0 32px;
+  font-size: 13px;
+  line-height: 1.5;
+  z-index: 10;
+}
+
+.sidebar-header {
+  padding: 0 20px 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 2;
+}
+.sidebar-header .title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.35;
+}
+.sidebar-header .subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.sidebar-nav { padding: 4px 0; }
+
+.sidebar-nav details { margin: 0; }
+.sidebar-nav details > summary {
+  display: block;
+  padding: 5px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  border-left: 3px solid transparent;
+  transition: all 0.12s;
+  list-style: none;
+  user-select: none;
+}
+.sidebar-nav details > summary::-webkit-details-marker { display: none; }
+.sidebar-nav details > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 14px;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+.sidebar-nav details[open] > summary::before { transform: rotate(90deg); }
+.sidebar-nav details > summary:hover { background: var(--code-bg); }
+.sidebar-nav details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sidebar-nav details > summary.active {
+  border-left-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.sidebar-nav details .sub {
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+  margin-left: 20px;
+}
+.sidebar-nav details .sub a {
+  display: block;
+  padding: 4px 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  font-size: 12.5px;
+  transition: all 0.12s;
+}
+.sidebar-nav details .sub a:hover { color: var(--text); background: var(--code-bg); }
+.sidebar-nav details .sub a.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+/* standalone nav links (non-details) */
+.sidebar-nav > a {
+  display: block;
+  padding: 5px 20px;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+  font-size: 13px;
+  transition: all 0.12s;
+}
+.sidebar-nav > a:hover { background: var(--code-bg); }
+.sidebar-nav > a.active {
+  border-left-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+/* sidebar scrollbar */
+.sidebar::-webkit-scrollbar { width: 5px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+/* ── Content ── */
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 40px 48px 96px;
+  max-width: 880px;
+}
+
+/* ── Header ── */
+.doc-header {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px 36px;
+  margin-bottom: 40px;
+  box-shadow: var(--shadow);
+}
+.doc-header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.doc-header .meta {
+  margin-top: 14px;
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.doc-header .meta strong { color: var(--text); font-weight: 600; }
+.doc-header .badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-revision { background: var(--accent-muted); color: var(--accent); }
+.badge-supersedes { background: var(--table-header); color: var(--text-muted); }
+
+/* ── Typography ── */
+h2 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 44px 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+  letter-spacing: -0.005em;
+  scroll-margin-top: 24px;
+}
+h3 {
+  font-size: 17px;
+  font-weight: 650;
+  margin: 28px 0 10px;
+  letter-spacing: -0.005em;
+  scroll-margin-top: 24px;
+}
+h4 {
+  font-size: 15px;
+  font-weight: 650;
+  margin: 20px 0 8px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  scroll-margin-top: 24px;
+}
+p { margin: 0 0 14px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+strong { font-weight: 650; }
+ul, ol { margin: 0 0 16px 24px; }
+li { margin-bottom: 4px; }
+blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 4px 16px;
+  margin: 16px 0;
+  color: var(--text-muted);
+  background: var(--code-bg);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 32px 0;
+}
+
+/* ── Section anchor links ── */
+.section-anchor {
+  opacity: 0;
+  font-size: 0.85em;
+  margin-left: 6px;
+  color: var(--text-muted);
+  transition: opacity 0.12s;
+  text-decoration: none;
+}
+h2:hover .section-anchor,
+h3:hover .section-anchor,
+h4:hover .section-anchor { opacity: 0.6; }
+.section-anchor:hover { opacity: 1 !important; }
+
+/* ── Tables ── */
+.table-wrap {
+  overflow-x: auto;
+  margin: 16px 0 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+thead th {
+  background: var(--table-header);
+  font-weight: 650;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+tbody tr:nth-child(even) { background: var(--table-stripe); }
+tbody tr:last-child td { border-bottom: none; }
+
+/* ── Tags ── */
+.tag-built, .tag-new {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 650;
+}
+.tag-built { background: var(--tag-built); color: var(--tag-built-text); }
+.tag-new   { background: var(--tag-new);   color: var(--tag-new-text); }
+
+/* ── Code ── */
+code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--code-border);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin: 14px 0 20px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  box-shadow: var(--shadow);
+}
+pre code { background: none; border: none; padding: 0; font-size: inherit; }
+h2 code, h3 code, h4 code { font-size: 0.92em; }
+
+/* ── Phase Tables ── */
+.phase-table td:first-child, .phase-table td:nth-child(2) {
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ── Footer ── */
+.footer-meta {
+  margin-top: 60px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Back to top ── */
+.back-to-top {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  width: 40px;
+  height: 40px;
+  border-radius: 99px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 20;
+  color: var(--text-muted);
+  font-size: 18px;
+}
+.back-to-top.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.back-to-top:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Sidebar toggle for mobile */
+.sidebar-toggle {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 30;
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--text);
+  align-items: center;
+  justify-content: center;
+}
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.3);
+  z-index: 9;
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    transform: translateX(-100%);
+    transition: transform 0.2s;
+    z-index: 11;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.12);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-toggle { display: flex; }
+  .sidebar-overlay.show { display: block; }
+  .content {
+    padding: 20px 20px 80px;
+    max-width: 100%;
+  }
+  .doc-header { padding: 20px; }
+  .doc-header h1 { font-size: 22px; }
+  h2 { font-size: 19px; }
+  pre { padding: 14px; font-size: 12px; }
+}
+
+@media (max-width: 500px) {
+  .content { padding: 16px 12px 64px; }
+  .doc-header h1 { font-size: 19px; }
+  .back-to-top { bottom: 16px; right: 12px; width: 34px; height: 34px; }
+}
+
+/* ── Print ── */
+@media print {
+  .sidebar, .sidebar-toggle, .sidebar-overlay, .back-to-top { display: none !important; }
+  :root {
+    --bg: #fff;
+    --bg-card: #fff;
+    --text: #000;
+    --border: #ccc;
+    --shadow: none;
+  }
+  .content { max-width: 100%; padding: 0; }
+  pre, .table-wrap { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<!-- Mobile toggle -->
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle navigation">☰</button>
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+<div class="layout">
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="title">Embedding Provider Integration</div>
+    <div class="subtitle">Revision 4 · 2026-07-21</div>
+  </div>
+  <div class="sidebar-nav">
+
+    <details open>
+      <summary data-section="s1">1. Context</summary>
+      <div class="sub">
+        <a href="#s1-1">1.1 What PR #380 Built</a>
+        <a href="#s1-2">1.2 Why Thin-Rust Won</a>
+      </div>
+    </details>
+
+    <a href="#s2" data-section="s2">2. Built vs Needs Building</a>
+
+    <a href="#s3" data-section="s3">3. Design Decisions</a>
+
+    <details open>
+      <summary data-section="s4">4. Pipeline Flow</summary>
+      <div class="sub">
+        <a href="#s4-1">4.1 Architecture</a>
+        <a href="#s4-2">4.2 Decision Tree</a>
+      </div>
+    </details>
+
+    <details>
+      <summary data-section="s5">5. Bloom Filter Dedup</summary>
+      <div class="sub">
+        <a href="#s5-1">5.1 Architecture</a>
+        <a href="#s5-2">5.2 Bloom Key</a>
+        <a href="#s5-3">5.3 Design Points</a>
+        <a href="#s5-4">5.4 Persistence</a>
+        <a href="#s5-5">5.5 Model-Change Detection</a>
+        <a href="#s5-6">5.6 Edge Cases</a>
+        <a href="#s5-7">5.7 DB Query</a>
+        <a href="#s5-8">5.8 TDD (14 tests)</a>
+      </div>
+    </details>
+
+    <details>
+      <summary data-section="s6">6. Token &amp; Batch Sizing</summary>
+      <div class="sub">
+        <a href="#s6-1">6.1 Estimator</a>
+        <a href="#s6-2">6.2 Constraints</a>
+        <a href="#s6-3">6.3 BatchBuilder</a>
+        <a href="#s6-4">6.4 Callback Interaction</a>
+        <a href="#s6-5">6.5 Config</a>
+        <a href="#s6-6">6.6 TDD (17 tests)</a>
+      </div>
+    </details>
+
+    <details>
+      <summary data-section="s7">7. Embed Callback Interface</summary>
+      <div class="sub">
+        <a href="#s7-1">7.1 Trait</a>
+        <a href="#s7-2">7.2 Result Actions</a>
+        <a href="#s7-3">7.3 PythonCallback</a>
+        <a href="#s7-4">7.4 Extract Vectors</a>
+        <a href="#s7-5">7.5 What It Enables</a>
+        <a href="#s7-6">7.6 TDD (11 tests)</a>
+      </div>
+    </details>
+
+    <details>
+      <summary data-section="s8">8. Error Handling Taxonomy</summary>
+      <div class="sub">
+        <a href="#s8-1">8.1 PipelineError</a>
+        <a href="#s8-2">8.2 Classification</a>
+        <a href="#s8-3">8.3 Pipeline Reaction</a>
+        <a href="#s8-4">8.4 TDD (15 tests)</a>
+      </div>
+    </details>
+
+    <a href="#s9" data-section="s9">9. Module Layout</a>
+
+    <a href="#s10" data-section="s10">10. Python Call Site</a>
+
+    <a href="#s11" data-section="s11">11. Test Strategy</a>
+
+    <a href="#s12" data-section="s12">12. Future Work</a>
+
+    <a href="#s13" data-section="s13">13. Logging</a>
+
+    <a href="#sa" data-section="sa">A. Differences from July 19</a>
+
+    <a href="#sb" data-section="sb">B. Comparison with PR #380</a>
+
+  </div>
+</nav>
+
+<!-- ═══════ CONTENT ═══════ -->
+<main class="content">
+
+<!-- HEADER -->
+<div class="doc-header">
+  <h1>Embedding Provider Integration — Revised Design (Thin-Rust)</h1>
+  <div class="meta">
+    <span><strong>Date:</strong> 2026-07-21</span>
+    <span><strong>Revision:</strong> <span class="badge badge-revision">4</span> PR #380 post-mortem</span>
+  </div>
+  <div class="meta" style="margin-top:8px">
+    <span><strong>Scope:</strong> Bloom dedup · Token-aware batching · EmbedBatchFn trait · Error taxonomy</span>
+  </div>
+  <div class="meta" style="margin-top:4px">
+    <span><strong>Depends on:</strong> PR #380 (Main Rust Flow) — merged</span>
+    <span class="badge badge-supersedes">Supersedes July&nbsp;19 heavy-Rust design</span>
+  </div>
+</div>
+
+<!-- ═══════ SECTION 1 ═══════ -->
+<h2 id="s1">1. Context: Why This Revision Exists <a class="section-anchor" href="#s1">#</a></h2>
+<p>The <a href="./2026-07-19-embedding-provider-integration-design.md">original July 19 design</a> proposed a <strong>heavy-Rust</strong> embed stage: Rust-native <code>EmbeddingProvider</code> trait, <code>reqwest</code> HTTP clients, retry logic, and bloom filter — all living in Rust. PR #380 took a fundamentally different path.</p>
+
+<h3 id="s1-1">1.1 What PR #380 Actually Built <a class="section-anchor" href="#s1-1">#</a></h3>
+<p>PR #380 implemented a <strong>thin-Rust</strong> approach where Rust is the pipeline orchestrator but delegates domain logic (parsing, embedding) back to Python via callbacks:</p>
+<ul>
+  <li><strong>DB Writer</strong> (Phase 0): Native DuckDB writes via <code>libduckdb-sys</code>, HNSW lifecycle, compaction — Rust owns DB I/O entirely</li>
+  <li><strong>Pipeline orchestration</strong>: <code>IndexingPipeline.run()</code> — drives the parse → embed → write sequence</li>
+  <li><strong>Parallel parse</strong>: Rayon thread pool dispatches file batches to Python <code>parse_batch_callback</code></li>
+  <li><strong>Parallel embed</strong>: Rayon thread pool dispatches text batches to Python <code>embed_batch_callback</code></li>
+  <li><strong>Incremental reindex</strong>: <code>compute_diff_blocking()</code> compares filesystem vs DB</li>
+  <li><strong>Progress</strong>: <code>progress_callback</code> from Rust → Python Rich progress bars</li>
+  <li><strong>Compaction</strong>: EXPORT/IMPORT atomic swap native in Rust</li>
+  <li><strong>Pipeline_parallel</strong>: Optional parse↔embed overlap via channel-based handoff</li>
+</ul>
+<p><strong>What Rust does NOT do</strong> (by design): HTTP calls, API key management, SDK integration, tiktoken, provider-specific dimension validation. All of that stays in Python's mature provider layer.</p>
+
+<h3 id="s1-2">1.2 Why Thin-Rust Won <a class="section-anchor" href="#s1-2">#</a></h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Heavy-Rust (original design)</th><th>Thin-Rust (PR #380)</th></tr></thead>
+<tbody>
+<tr><td>Duplicate all provider logic in Rust (~1500 lines)</td><td>Reuse existing Python providers (0 new provider lines)</td></tr>
+<tr><td>Maintain Rust HTTP clients for each provider</td><td>Python owns HTTP — Rust never touches the network</td></tr>
+<tr><td>Risk of Rust↔Python behavioral drift</td><td>One source of truth for embedding behavior</td></tr>
+<tr><td>Blocked on Rust provider maturity before shipping</td><td>DB Writer shipped first; embed callback added incrementally</td></tr>
+<tr><td>Harder to add new providers (Qwen, Ollama, Cohere)</td><td>New providers work immediately via Python callback</td></tr>
+</tbody>
+</table>
+</div>
+<p>The callback pattern is the key architectural insight: <strong>Rust owns data flow, Python owns domain logic</strong>.</p>
+
+<!-- ═══════ SECTION 2 ═══════ -->
+<h2 id="s2">2. What's Already Built vs What Needs Building <a class="section-anchor" href="#s2">#</a></h2>
+
+<h3>2.1 ✅ Already Built</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Component</th><th>File(s)</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Rust DB Writer</td><td><code>src/db_writer.rs</code>, <code>src/db/duckdb_backend.rs</code></td><td>DuckDB writes with HNSW lifecycle, compaction, crash recovery</td></tr>
+<tr><td>Pipeline orchestration</td><td><code>src/pipeline/pipeline.rs</code></td><td><code>IndexingPipeline.run()</code>: parse → embed → write loop</td></tr>
+<tr><td>Parallel parse</td><td><code>src/pipeline/pipeline.rs</code></td><td>Rayon dispatch + Python <code>parse_batch_callback</code></td></tr>
+<tr><td>Parallel embed</td><td><code>src/pipeline/pipeline.rs</code></td><td>Rayon dispatch + Python <code>embed_batch_callback</code></td></tr>
+<tr><td>Incremental reindex</td><td><code>src/pipeline/differ.rs</code></td><td><code>compute_diff_blocking()</code></td></tr>
+<tr><td>Progress callback</td><td><code>src/pipeline/pipeline.rs</code></td><td><code>progress_callback(phase, current, total)</code> → Rich bars</td></tr>
+<tr><td>Compaction</td><td><code>src/db/duckdb_backend.rs</code></td><td>EXPORT/IMPORT atomic swap</td></tr>
+<tr><td>Pipeline_parallel mode</td><td><code>src/pipeline/pipeline.rs</code></td><td>Parse↔embed overlap via channels</td></tr>
+<tr><td>GIL management</td><td>throughout</td><td><code>py.allow_threads()</code> + <code>Python::with_gil()</code></td></tr>
+<tr><td>Logging bridge</td><td><code>src/lib.rs</code></td><td><code>pyo3-log</code> → Python <code>logging</code> → loguru intercept</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>2.2 🔨 Needs Building (this design)</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Component</th><th>Priority</th><th>Est. Lines</th><th>Depends on</th></tr></thead>
+<tbody>
+<tr><td>Bloom filter dedup</td><td>High</td><td>~200</td><td>DB population query</td></tr>
+<tr><td>Token estimation &amp; batch builder</td><td>High</td><td>~150</td><td>—</td></tr>
+<tr><td><code>EmbedBatchFn</code> trait + <code>PythonEmbedCallback</code></td><td>High</td><td>~120</td><td>—</td></tr>
+<tr><td><code>classify_python_embed_error()</code></td><td>Medium</td><td>~80</td><td>Error taxonomy</td></tr>
+<tr><td>Unified <code>PipelineError</code></td><td>Medium</td><td>~60</td><td>Existing <code>src/error.rs</code></td></tr>
+<tr><td>Bloom sidecar <code>.meta</code> JSON</td><td>Low</td><td>~40</td><td>Bloom filter</td></tr>
+<tr><td>Integration wiring in pipeline.rs</td><td>High</td><td>~60</td><td>All of the above</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Total: ~710 lines of Rust. Zero Python changes needed</strong> (callback is already wired).</p>
+
+<!-- ═══════ SECTION 3 ═══════ -->
+<h2 id="s3">3. Design Decisions (Updated) <a class="section-anchor" href="#s3">#</a></h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Decision</th><th>Choice</th><th>Rationale</th></tr></thead>
+<tbody>
+<tr><td>Embedding approach</td><td><strong>Python callback</strong> via <code>EmbedBatchFn</code> trait</td><td>Rust orchestrates, Python owns domain logic</td></tr>
+<tr><td>Concurrency model</td><td><strong>Rayon thread pool</strong> calling Python callbacks</td><td>Already built; each thread acquires GIL independently</td></tr>
+<tr><td>Bloom filter</td><td><strong>In-memory <code>fastbloom</code></strong> with persisted sidecar</td><td>Content-hash keys; 1% FPR; no DB round-trip</td></tr>
+<tr><td>Token estimation</td><td><strong><code>text.len() / 3</code></strong> in Rust, pre-dispatch</td><td>Conservative; same as Python fallback</td></tr>
+<tr><td>Batch sizing</td><td><strong>Rust <code>BatchBuilder</code></strong> enforcing max chunks + budget</td><td>Reduces callback frequency; pre-validated batches</td></tr>
+<tr><td>Error taxonomy</td><td><strong>Unified <code>PipelineError</code></strong> with fatal vs non-fatal</td><td>Ad-hoc <code>PyErr</code> replaced with typed errors</td></tr>
+<tr><td>Provider config</td><td><strong>Passed from Python</strong> in <code>PipelineConfig</code></td><td>Rust maintains zero provider config tables</td></tr>
+<tr><td>Bloom key</td><td><code>(content_hash, provider, model, output_dims)</code></td><td>Content-based dedup across chunk_id changes</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ SECTION 4 ═══════ -->
+<h2 id="s4">4. Pipeline Flow <a class="section-anchor" href="#s4">#</a></h2>
+<h3 id="s4-1">4.1 Updated Architecture <a class="section-anchor" href="#s4-1">#</a></h3>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│                      Rust Pipeline (thin orchestration)              │
+│                                                                      │
+│  run_pipeline(config)                                                │
+│    │                                                                 │
+│    ├─ load_bloom(db) ──── Arc&lt;AtomicBloomFilter&gt; ─────────────────┐ │
+│    │                                                                │ │
+│    ├─ parse files (rayon + Python callback)  ←── GIL acquire/release│ │
+│    │     ↓ ParsedBatch                                              │ │
+│    │                                                                │ │
+│    ├─ for each parsed batch:                                        │ │
+│    │   ├─ for each chunk:                                           │ │
+│    │   │   ├─ estimate_tokens() ──── skip if oversized              │ │
+│    │   │   ├─ bloom.contains(key) ── skip if hit  ←────────────────┘ │
+│    │   │   └─ BatchBuilder::push()                                   │
+│    │   │       └─ token_budget_check → flush batch if full           │
+│    │   │                                                            │
+│    │   └─ dispatch via EmbedBatchFn trait                           │
+│    │       └─ PythonEmbedCallback                                  │
+│    │           └─ Python::with_gil() → embed_batch_callback(texts)  │
+│    │               └─ Python async provider (OpenAI/VoyageAI/...)  │
+│    │                   └─ returns EmbedBatchResult                  │
+│    │                                                                 │
+│    ├─ scatter vectors → chunks, emit completed files                 │
+│    └─ write_batch(db_writer, files) ──── DuckDB (GIL-free)          │
+│                                                                      │
+│  ┌──────────────────── Python Domain Logic ──────────────────────┐  │
+│  │  parse_batch_callback()     embed_batch_callback()             │  │
+│  │  ├─ tree-sitter parsing     ├─ API key management              │  │
+│  │  ├─ chunking                ├─ HTTP calls (async)              │  │
+│  │  └─ hash computation        ├─ Retry + rate-limit handling     │  │
+│  │                              ├─ Dimension/truncation logic     │  │
+│  │                              └─ Response parsing               │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="s4-2">4.2 Per-Chunk Decision Tree (Rust-side, pre-callback) <a class="section-anchor" href="#s4-2">#</a></h3>
+<pre><code>chunk arrives in parsed batch
+  ├─ text empty or no content_hash?   → skip
+  ├─ estimate_tokens(text) &gt; max?     → skip + warn (too large)
+  ├─ bloom.contains(key)?             → skip (stats.skipped++)
+  ├─ batch token budget exceeded?     → flush current batch, start new
+  └─ no                               → add to current batch</code></pre>
+<p>None of these checks require Python — they run inside Rust's <code>py.allow_threads()</code> region. The callback is only invoked when Rust has a ready-to-send batch.</p>
+
+<!-- ═══════ SECTION 5 ═══════ -->
+<h2 id="s5">5. Bloom Filter Dedup <a class="section-anchor" href="#s5">#</a></h2>
+<h3 id="s5-1">5.1 Architecture <a class="section-anchor" href="#s5-1">#</a></h3>
+<pre><code>Pipeline startup
+  └─ load_bloom(db) → Arc&lt;AtomicBloomFilter&gt;
+       ├─ Check .chunkhound/db/embeddings.bloom + .bloom.meta
+       ├─ If absent or provider/model mismatch → rebuild from DB
+       │    └─ JOIN chunks + embeddings_N tables, insert all bloom keys
+       └─ Persist to disk (fastbloom serde + JSON sidecar)</code></pre>
+
+<h3 id="s5-2">5.2 Bloom Key <a class="section-anchor" href="#s5-2">#</a></h3>
+<pre><code>fn bloom_key(content_hash: &amp;str, provider: &amp;str, model: &amp;str, dims: usize) -&gt; String {
+    format!("{content_hash}:{provider}:{model}:{dims}")
+}</code></pre>
+
+<h3 id="s5-3">5.3 Key Design Points <a class="section-anchor" href="#s5-3">#</a></h3>
+<ul>
+  <li><strong>False positive rate:</strong> 1% (~1 in 100 eligible chunks skipped per run). Recovered on next index.</li>
+  <li><strong>Memory:</strong> ~12MB for 10M embeddings at 1% FPR (fastbloom)</li>
+  <li><strong>Content-hash-based dedup:</strong> Re-parsed identical text is deduped across chunk_id changes</li>
+  <li><strong>Dimension-aware:</strong> Key includes <code>output_dims</code>, so switching dims triggers re-embedding</li>
+  <li><strong>Thread safety:</strong> <code>Arc&lt;AtomicBloomFilter&gt;</code> — read-only during pipeline execution</li>
+</ul>
+
+<h3 id="s5-4">5.4 Persistence <a class="section-anchor" href="#s5-4">#</a></h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>File</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><code>.chunkhound/db/embeddings.bloom</code></td><td><code>fastbloom</code> serde binary</td></tr>
+<tr><td><code>.chunkhound/db/embeddings.bloom.meta</code></td><td><code>{"provider": "openai", "model": "text-embedding-3-small", "created_at": "..."}</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="s5-5">5.5 Model-Change Detection <a class="section-anchor" href="#s5-5">#</a></h3>
+<ul><li><strong>Match:</strong> Load bloom from disk (fast)</li><li><strong>Mismatch or absent:</strong> Rebuild from DB</li></ul>
+
+<h3 id="s5-6">5.6 Edge Cases <a class="section-anchor" href="#s5-6">#</a></h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Case</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td>First run, no bloom file</td><td>Create with 1M minimum capacity; all keys miss</td></tr>
+<tr><td>Model/provider change</td><td>Meta mismatch → discard old bloom, rebuild from DB</td></tr>
+<tr><td>Bloom overflow (&gt;90% load)</td><td>Log warning, continue with stale filter</td></tr>
+<tr><td>Empty content_hash (legacy)</td><td>Always embed; never insert into bloom</td></tr>
+<tr><td>Crash during bloom persist</td><td>Rebuild from DB on next start</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="s5-7">5.7 DB Population Query <a class="section-anchor" href="#s5-7">#</a></h3>
+<pre><code>SELECT c.content_hash, e.provider, e.model, e.dims
+FROM chunks c JOIN embeddings_1536 e ON c.id = e.chunk_id
+-- ... UNION for each embeddings_N table</code></pre>
+
+<h3 id="s5-8">5.8 TDD: Bloom Filter Tests (14 tests, 7 phases) <a class="section-anchor" href="#s5-8">#</a></h3>
+<p>All tests live in <code>src/bloom.rs</code> behind <code>#[cfg(test)] mod tests</code>.</p>
+<div class="table-wrap phase-table">
+<thead><tr><th>Phase</th><th>Tests</th><th>What to implement</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>bloom_key_*</code> (4)</td><td><code>bloom_key()</code></td></tr>
+<tr><td>2</td><td><code>bloom_insert_then_contains</code>, <code>bloom_does_not_contain_uninserted</code></td><td><code>AtomicBloomFilter</code> wrapper</td></tr>
+<tr><td>3</td><td><code>bloom_false_positive_rate_within_bounds</code></td><td>FPR validation</td></tr>
+<tr><td>4</td><td><code>persist_*</code>, <code>corrupted_*</code>, <code>missing_*</code> (3)</td><td><code>persist_bloom()</code>, <code>load_bloom_from_disk()</code></td></tr>
+<tr><td>5</td><td><code>meta_mismatch_discards_bloom</code>, <code>meta_match_keeps_bloom</code></td><td><code>BloomMeta</code>, <code>validate_bloom_meta()</code></td></tr>
+<tr><td>6</td><td><code>bloom_empty_content_hash_*</code></td><td>Contract test</td></tr>
+<tr><td>7</td><td><code>bloom_concurrent_reads_across_threads</code></td><td>Thread safety</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ SECTION 6 ═══════ -->
+<h2 id="s6">6. Token Estimation &amp; Batch Sizing <a class="section-anchor" href="#s6">#</a></h2>
+<h3 id="s6-1">6.1 Estimator <a class="section-anchor" href="#s6-1">#</a></h3>
+<pre><code>const CHARS_PER_TOKEN: usize = 3;
+fn estimate_tokens(text: &amp;str) -&gt; usize { text.len() / CHARS_PER_TOKEN }</code></pre>
+
+<h3 id="s6-2">6.2 Batch Constraints <a class="section-anchor" href="#s6-2">#</a></h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Provider</th><th>max_chunks</th><th>max_tokens/chunk</th><th>batch budget</th></tr></thead>
+<tbody>
+<tr><td>OpenAI text-embedding-3-*</td><td>2048</td><td>8191 chars</td><td>—</td></tr>
+<tr><td>VoyageAI</td><td>1000</td><td>32000 chars</td><td>120k–1M</td></tr>
+<tr><td>Qwen3 (OAI-compatible)</td><td>128</td><td>8192 chars</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="s6-3">6.3 BatchBuilder <a class="section-anchor" href="#s6-3">#</a></h3>
+<pre><code>struct BatchBuilder {
+    chunks: Vec&lt;BatchChunk&gt;,
+    current_tokens: usize,
+    config: BatchConfig,
+}
+impl BatchBuilder {
+    fn push(&amp;mut self, chunk: BatchChunk) -&gt; Option&lt;Vec&lt;BatchChunk&gt;&gt; { ... }
+    fn flush(&amp;mut self) -&gt; Option&lt;Vec&lt;BatchChunk&gt;&gt; { ... }
+}</code></pre>
+
+<h3 id="s6-4">6.4 Interaction with Callback <a class="section-anchor" href="#s6-4">#</a></h3>
+<p>The callback still handles <code>ContextLengthExceeded</code> as a safety net. Pre-flight sizing filters oversized chunks and splits token-budget batches before the callback sees them.</p>
+
+<h3 id="s6-5">6.5 Config from Python <a class="section-anchor" href="#s6-5">#</a></h3>
+<pre><code>struct BatchConfig {
+    max_chunks_per_batch: usize,
+    max_tokens_per_chunk: usize,
+    batch_token_budget: Option&lt;usize&gt;,  // None = no budget (OpenAI)
+}</code></pre>
+
+<h3 id="s6-6">6.6 TDD: Token &amp; BatchBuilder Tests (17 tests, 6 phases) <a class="section-anchor" href="#s6-6">#</a></h3>
+<div class="table-wrap phase-table">
+<thead><tr><th>Phase</th><th>Tests</th><th>What to implement</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>estimate_tokens_*</code> (6)</td><td><code>estimate_tokens()</code></td></tr>
+<tr><td>2</td><td><code>batch_builder_flushes_on_capacity</code> (2)</td><td>Capacity logic in <code>push()</code></td></tr>
+<tr><td>3</td><td><code>batch_builder_flushes_on_token_budget</code> (2)</td><td>Token budget logic</td></tr>
+<tr><td>4</td><td><code>batch_builder_oversized_chunk_skipped</code> (3)</td><td>Per-chunk limit</td></tr>
+<tr><td>5</td><td><code>batch_builder_manual_flush_*</code> (2)</td><td><code>flush()</code></td></tr>
+<tr><td>6</td><td><code>batch_builder_single_chunk_exceeds_budget</code> (2)</td><td>Edge cases</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ SECTION 7 ═══════ -->
+<h2 id="s7">7. Embed Callback Interface <a class="section-anchor" href="#s7">#</a></h2>
+<h3 id="s7-1">7.1 Trait <a class="section-anchor" href="#s7-1">#</a></h3>
+<pre><code>pub trait EmbedBatchFn: Send + Sync {
+    fn embed_batch(&amp;self, texts: &amp;[String], provider: &amp;str, model: &amp;str, dims: usize) -&gt; EmbedBatchResult;
+}
+
+pub struct EmbedBatchResult {
+    pub vectors: Vec&lt;Option&lt;Vec&lt;f32&gt;&gt;&gt;,   // None = that chunk failed
+    pub stats: BatchCallStats,
+}
+
+pub struct BatchCallStats {
+    pub api_calls: u32,
+    pub total_latency_ms: u64,
+}</code></pre>
+<p><strong>Why <code>Vec&lt;Option&lt;Vec&lt;f32&gt;&gt;&gt;</code>?</strong> Partial failures are common — one chunk out of 100 may exceed context length. The pipeline scatters successes and marks only failures as <code>vector=None</code>.</p>
+
+<h3 id="s7-2">7.2 Result Actions <a class="section-anchor" href="#s7-2">#</a></h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Scenario</th><th><code>vectors</code></th><th>Pipeline action</th></tr></thead>
+<tbody>
+<tr><td>Full success</td><td>All <code>Some(vec)</code></td><td>Scatter to chunks, emit files</td></tr>
+<tr><td>Partial failure</td><td>Mix <code>Some</code>/<code>None</code></td><td>Scatter successes, failures → <code>vector=None</code></td></tr>
+<tr><td>Total failure</td><td>All <code>None</code></td><td><code>stats.chunks_failed += N</code></td></tr>
+<tr><td>Fatal exception</td><td>Propagated as <code>Err(PipelineError)</code></td><td>Abort via <code>cancelled</code> flag</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="s7-3">7.3 PythonCallback Implementation <a class="section-anchor" href="#s7-3">#</a></h3>
+<pre><code>pub struct PythonEmbedCallback { callable: Py&lt;PyAny&gt; }
+
+impl EmbedBatchFn for PythonEmbedCallback {
+    fn embed_batch(&amp;self, texts, provider, model, dims) -&gt; EmbedBatchResult {
+        Python::with_gil(|py| {
+            match self.callable.call1(py, (texts, provider, model)) {
+                Ok(result) =&gt; EmbedBatchResult {
+                    vectors: extract_vectors_from_python(py, &amp;result, texts.len()),
+                    stats: BatchCallStats::default(),
+                },
+                Err(e) =&gt; EmbedBatchResult {
+                    vectors: vec![None; texts.len()],
+                    stats: BatchCallStats::default(),
+                },
+            }
+        })
+    }
+}</code></pre>
+
+<h3 id="s7-4">7.4 Extract Vectors from Python <a class="section-anchor" href="#s7-4">#</a></h3>
+<pre><code>fn extract_vectors_from_python(py, result, expected_len) -&gt; Vec&lt;Option&lt;Vec&lt;f32&gt;&gt;&gt; {
+    let list: &amp;PyList = match result.downcast() { Ok(l) =&gt; l, Err(_) =&gt; return vec![None; expected_len] };
+    list.iter().map(|item| {
+        if item.is_none() { None }
+        else if let Ok(inner) = item.downcast::&lt;PyList&gt;() {
+            let vec: Vec&lt;f32&gt; = inner.iter().filter_map(|v| v.extract::&lt;f32&gt;().ok()).collect();
+            if vec.is_empty() { None } else { Some(vec) }
+        } else { None }
+    }).collect()
+}</code></pre>
+
+<h3 id="s7-5">7.5 What the Trait Enables <a class="section-anchor" href="#s7-5">#</a></h3>
+<ul>
+  <li><strong>Testability:</strong> Mock <code>EmbedBatchFn</code> without Python</li>
+  <li><strong>Swapability:</strong> Future Rust-native providers implement same trait</li>
+  <li><strong>Clarity:</strong> Pipeline works with typed <code>EmbedBatchResult</code>, never raw <code>PyErr</code></li>
+  <li><strong>Partial failure:</strong> Explicit per-chunk <code>Option</code>, no guesswork</li>
+</ul>
+
+<h3 id="s7-6">7.6 TDD: EmbedBatchFn &amp; Callback Tests (11 tests, 4 phases) <a class="section-anchor" href="#s7-6">#</a></h3>
+<div class="table-wrap phase-table">
+<thead><tr><th>Phase</th><th>Tests</th><th>What to implement</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Mock tests (7)</td><td><code>EmbedBatchFn</code> trait + <code>EmbedBatchResult</code></td></tr>
+<tr><td>2</td><td><code>python_callback_extracts_vectors_correctly</code></td><td><code>PythonEmbedCallback</code></td></tr>
+<tr><td>3</td><td><code>python_callback_handles_none_entries</code></td><td>None handling in extract</td></tr>
+<tr><td>4</td><td><code>malformed_result</code>, <code>wrong_vector_count</code></td><td>Error handling + padding</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ SECTION 8 ═══════ -->
+<h2 id="s8">8. Error Handling Taxonomy <a class="section-anchor" href="#s8">#</a></h2>
+<h3 id="s8-1">8.1 PipelineError <a class="section-anchor" href="#s8-1">#</a></h3>
+<pre><code>#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum PipelineError {
+    // Fatal
+    #[error("authentication failed for {provider}: {message}")]
+    Auth { provider: String, message: String },
+    #[error("bad request for {provider}: {message}")]
+    BadRequest { provider: String, message: String },
+    #[error("pipeline cancelled")]
+    Cancelled,
+
+    // Non-fatal (pipeline continues)
+    #[error("provider error for {provider}: {message}")]
+    ProviderError { provider: String, message: String },
+    #[error("rate limited by {provider}")]
+    RateLimited { provider: String, retry_after_secs: Option&lt;u64&gt; },
+
+    // Infrastructure
+    #[error("database error: {0}")]  DbError(String),
+    #[error("I/O error at {path}: {message}")]  IoError { path: PathBuf, message: String },
+}
+
+impl PipelineError {
+    pub fn is_fatal(&amp;self) -&gt; bool {
+        matches!(self, Self::Auth { .. } | Self::BadRequest { .. } | Self::Cancelled)
+    }
+}</code></pre>
+
+<h3 id="s8-2">8.2 Python Exception Classification <a class="section-anchor" href="#s8-2">#</a></h3>
+<pre><code>fn classify_python_embed_error(py: Python&lt;'_&gt;, err: &amp;PyErr) -&gt; PipelineError {
+    let type_name = err.get_type(py).name().unwrap_or("").to_string();
+    match type_name.as_str() {
+        "AuthenticationError"        =&gt; /* Auth */,
+        "RateLimitError"             =&gt; /* RateLimited */,
+        "BadRequestError" if context =&gt; /* ProviderError */,
+        "BadRequestError"            =&gt; /* BadRequest */,
+        "APITimeoutError" | "..."    =&gt; /* ProviderError */,
+        _                            =&gt; /* ProviderError */,  // safe default
+    }
+}</code></pre>
+
+<h3 id="s8-3">8.3 Pipeline Reaction <a class="section-anchor" href="#s8-3">#</a></h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Error type</th><th>Pipeline action</th></tr></thead>
+<tbody>
+<tr><td><code>Auth</code>, <code>BadRequest</code></td><td>Set <code>cancelled = true</code>, drain, propagate</td></tr>
+<tr><td><code>ProviderError</code>, <code>RateLimited</code></td><td>Mark batch <code>vector=None</code>, <strong>pipeline continues</strong></td></tr>
+<tr><td><code>Cancelled</code></td><td>Safety-net drain, exit gracefully</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="s8-4">8.4 TDD: Error Tests (15 tests, 6 phases) <a class="section-anchor" href="#s8-4">#</a></h3>
+<div class="table-wrap phase-table">
+<thead><tr><th>Phase</th><th>Tests</th><th>What to implement</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>*_is_fatal</code> / <code>*_is_not_fatal</code> (5)</td><td><code>PipelineError</code> + <code>is_fatal()</code></td></tr>
+<tr><td>2</td><td><code>same_error_*</code>, <code>different_error_*</code> (2)</td><td><code>#[derive(PartialEq)]</code></td></tr>
+<tr><td>3</td><td><code>*_display_includes_*</code> (3)</td><td><code>#[error(...)]</code> formatting</td></tr>
+<tr><td>4</td><td><code>all_fatal_variants_are_exhaustive</code></td><td>Exhaustiveness check</td></tr>
+<tr><td>5</td><td><code>classify_*_as_non_fatal_by_default</code></td><td><code>classify_python_embed_error()</code></td></tr>
+<tr><td>6</td><td><code>classify_value_error_as_provider_error</code></td><td>Type-name matching</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ SECTION 9 ═══════ -->
+<h2 id="s9">9. Module Layout <a class="section-anchor" href="#s9">#</a></h2>
+<pre><code>src/
+├── lib.rs                  # pyo3_log init (unchanged)
+├── error.rs                # PipelineError (refactored)
+├── types.rs                # Shared types (unchanged)
+├── db/                     # (unchanged)
+│   ├── mod.rs
+│   └── duckdb_backend.rs
+├── db_writer.rs            # (unchanged)
+├── pipeline/               # (PR #380)
+│   ├── mod.rs
+│   ├── pipeline.rs         # UPDATED: wire bloom + token + callback
+│   └── differ.rs
+├── bloom.rs                # <span class="tag-new">NEW</span>
+└── embed/                  # <span class="tag-new">NEW</span>
+    ├── mod.rs
+    ├── token.rs
+    └── callback.rs</code></pre>
+
+<div class="table-wrap">
+<thead><tr><th>File</th><th>Change</th></tr></thead>
+<tbody>
+<tr><td><code>src/error.rs</code></td><td>Replace DB-only <code>DbError</code> with unified <code>PipelineError</code></td></tr>
+<tr><td><code>src/pipeline/pipeline.rs</code></td><td>Wire bloom + token + EmbedBatchFn</td></tr>
+<tr><td><code>src/lib.rs</code></td><td>Register new modules</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ SECTION 10 ═══════ -->
+<h2 id="s10">10. Python Call Site <a class="section-anchor" href="#s10">#</a></h2>
+<pre><code># chunkhound/pipeline_bridge.py (already exists from PR #380)
+pipeline = chunkhound_native.IndexingPipeline(db_config, pipeline_config)
+report = pipeline.run(
+    root="/path/to/repo",
+    embed_batch_callback=create_embed_callback(provider),  # ← already wired
+    ...
+)</code></pre>
+
+<!-- ═══════ SECTION 11 ═══════ -->
+<h2 id="s11">11. Test Strategy <a class="section-anchor" href="#s11">#</a></h2>
+<p>Development follows <strong>strict TDD</strong>: RED → GREEN → refactor per phase.</p>
+<div class="table-wrap">
+<thead><tr><th>Module</th><th>Tests</th><th>Phases</th></tr></thead>
+<tbody>
+<tr><td><code>src/bloom.rs</code></td><td>14</td><td>7 — key → insert → FPR → persist → meta → contract → threads</td></tr>
+<tr><td><code>src/embed/token.rs</code></td><td>17</td><td>6 — estimate → capacity → budget → limits → flush → edges</td></tr>
+<tr><td><code>src/embed/mod.rs</code></td><td>7</td><td>1 — mock trait + correctness + object safety</td></tr>
+<tr><td><code>src/embed/callback.rs</code></td><td>4</td><td>3 — extract → None → malformed</td></tr>
+<tr><td><code>src/error.rs</code></td><td>12</td><td>4 — fatal → equality → display → exhaustive</td></tr>
+<tr><td><code>src/embed/callback.rs</code> (classify)</td><td>3</td><td>2 — default → type-name</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Python Contract Tests</h3>
+<ul>
+  <li><code>test_bloom_skips_existing_embeddings</code> — second run = 0 callbacks</li>
+  <li><code>test_bloom_model_change_rebuilds_bloom</code> — model switch → re-embed</li>
+  <li><code>test_bloom_persists_across_pipeline_restarts</code> — survives close/open</li>
+  <li><code>test_token_budget_batches_are_right_sized</code> — never over-budget</li>
+</ul>
+
+<h3>Mandatory Checks</h3>
+<pre><code>cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+uv run pytest tests/contracts/ -v && uv run pytest tests/test_smoke.py -v -n auto</code></pre>
+
+<!-- ═══════ SECTION 12 ═══════ -->
+<h2 id="s12">12. Future Work <a class="section-anchor" href="#s12">#</a></h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Item</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>Rust-native OpenAI/VoyageAI providers</td><td>If callback overhead becomes bottleneck</td></tr>
+<tr><td>Qwen/Ollama/Cohere native providers</td><td>When user demand justifies</td></tr>
+<tr><td>Bloom overflow auto-rebuild</td><td>When load factor tracking added</td></tr>
+<tr><td>tiktoken integration</td><td>If char-based estimation produces too many false skips</td></tr>
+<tr><td>Rerank support</td><td>Separate from embed stage</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ SECTION 13 ═══════ -->
+<h2 id="s13">13. Logging <a class="section-anchor" href="#s13">#</a></h2>
+<div class="table-wrap">
+<thead><tr><th>Location</th><th>Level</th><th>Message</th></tr></thead>
+<tbody>
+<tr><td>Bloom loaded from disk</td><td>INFO</td><td><code>"Bloom: 52341 entries from disk"</code></td></tr>
+<tr><td>Bloom rebuilt from DB</td><td>INFO</td><td><code>"Bloom rebuilt: 89234 entries"</code></td></tr>
+<tr><td>Bloom skips</td><td>DEBUG</td><td><code>"Bloom: 1823 skipped, 517 new"</code></td></tr>
+<tr><td>Oversized chunk</td><td>WARN</td><td><code>"Skipping oversized chunk: est. 12000 &gt; 8191 max"</code></td></tr>
+<tr><td>Batch flushed</td><td>DEBUG</td><td><code>"Flushing batch: 204 chunks, 5800 tokens"</code></td></tr>
+<tr><td>Callback partial fail</td><td>WARN</td><td><code>"Embed: 12/100 chunks failed (provider error)"</code></td></tr>
+<tr><td>Callback fatal</td><td>ERROR</td><td><code>"Embed: auth failed — aborting"</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ APPENDIX A ═══════ -->
+<h2 id="sa">A. Differences from Original July 19 Design <a class="section-anchor" href="#sa">#</a></h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Aspect</th><th>July 19</th><th>July 21</th></tr></thead>
+<tbody>
+<tr><td>Embedding</td><td>Rust <code>EmbeddingProvider</code> + <code>reqwest</code></td><td>Python callback via <code>EmbedBatchFn</code></td></tr>
+<tr><td>HTTP</td><td>Rust <code>reqwest::blocking</code></td><td>Python async providers</td></tr>
+<tr><td>Concurrency</td><td>Crossbeam worker pool</td><td>Rayon → Python callbacks</td></tr>
+<tr><td>Providers</td><td>Rust ~1200 lines</td><td>0 Rust provider lines</td></tr>
+<tr><td>Config</td><td>Static <code>phf</code> tables</td><td>Passed from Python</td></tr>
+<tr><td>Retry</td><td>Rust <code>RetryPolicy</code></td><td>Python providers</td></tr>
+<tr><td>Bloom</td><td>Planned, not built</td><td>Designed here</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════ APPENDIX B ═══════ -->
+<h2 id="sb">B. Comparison with PR #380 Existing Pipeline <a class="section-anchor" href="#sb">#</a></h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Component</th><th>PR #380</th><th>This Design</th></tr></thead>
+<tbody>
+<tr><td>Pipeline orchestration</td><td><span class="tag-built">✅ Built</span></td><td>Wired with bloom + token + trait</td></tr>
+<tr><td>Parallel parse</td><td><span class="tag-built">✅ Built</span></td><td>Unchanged</td></tr>
+<tr><td>Parallel embed</td><td><span class="tag-built">✅ Built</span></td><td>Formalized via <code>EmbedBatchFn</code></td></tr>
+<tr><td>DB Writer</td><td><span class="tag-built">✅ Built</span></td><td>Unchanged</td></tr>
+<tr><td>Incremental reindex</td><td><span class="tag-built">✅ Built</span></td><td>Unchanged</td></tr>
+<tr><td>Progress</td><td><span class="tag-built">✅ Built</span></td><td>Unchanged</td></tr>
+<tr><td>Compaction</td><td><span class="tag-built">✅ Built</span></td><td>Unchanged</td></tr>
+<tr><td>Bloom filter</td><td><span class="tag-new">❌ New</span></td><td>Designed here</td></tr>
+<tr><td>Token estimation</td><td><span class="tag-new">❌ New</span></td><td>Moves to Rust pre-dispatch</td></tr>
+<tr><td>EmbedBatchFn trait</td><td><span class="tag-new">❌ New</span></td><td>Formalized</td></tr>
+<tr><td>Error taxonomy</td><td><span class="tag-new">❌ New</span></td><td><code>PipelineError</code> enum</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="footer-meta">
+  <p>Generated 2026-07-21 · Revision 4 · <strong>58 TDD tests</strong> across 6 modules · ~710 lines new Rust code · 0 Python changes</p>
+  <p><a href="./2026-07-19-embedding-provider-integration-design.md">← July 19 heavy-Rust design (superseded)</a> · <a href="./2026-07-19-embedding-rust-vs-python-comparison.md">July 19 comparison doc</a></p>
+</div>
+
+</main>
+</div><!-- /layout -->
+
+<!-- Back to top -->
+<button class="back-to-top" id="backToTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">↑</button>
+
+<script>
+// ── Back to top visibility ──
+const btn = document.getElementById('backToTop');
+window.addEventListener('scroll', () => {
+  btn.classList.toggle('visible', window.scrollY > 400);
+});
+
+// ── Active section tracking ──
+const sidebar = document.getElementById('sidebar');
+const allLinks = sidebar.querySelectorAll('a[href^="#"]');
+const allSummaries = sidebar.querySelectorAll('summary[data-section]');
+
+function updateActive() {
+  let currentId = '';
+  const headings = document.querySelectorAll('h2[id], h3[id]');
+  const scrollY = window.scrollY + 80;
+
+  headings.forEach(h => {
+    if (h.offsetTop <= scrollY) currentId = h.id;
+  });
+
+  // Update sidebar links
+  allLinks.forEach(a => {
+    a.classList.toggle('active', a.getAttribute('href') === '#' + currentId);
+  });
+
+  // Open parent details + highlight summary
+  allSummaries.forEach(s => {
+    const sectionId = s.dataset.section;
+    const active = currentId.startsWith(sectionId);
+    const details = s.closest('details');
+    if (details && active) details.open = true;
+  });
+}
+
+window.addEventListener('scroll', updateActive, { passive: true });
+window.addEventListener('load', updateActive);
+
+// ── Mobile sidebar toggle ──
+function toggleSidebar() {
+  sidebar.classList.toggle('open');
+  document.querySelector('.sidebar-overlay').classList.toggle('show');
+}
+
+// Close sidebar when a link is clicked (mobile)
+allLinks.forEach(a => {
+  a.addEventListener('click', () => {
+    if (window.innerWidth <= 900) toggleSidebar();
+  });
+});
+
+// ── Keyboard: ESC closes sidebar ──
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && sidebar.classList.contains('open')) toggleSidebar();
+});
+</script>
+
+</body>
+</html>

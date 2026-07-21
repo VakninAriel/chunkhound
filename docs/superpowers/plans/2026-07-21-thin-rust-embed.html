@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thin-Rust Embed Stage — Implementation Plan</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #faf9f7; --bg-card: #ffffff; --text: #1a1a1a; --text-muted: #6b6b6b;
+  --border: #e2ddd6; --accent: #2563eb; --accent-muted: #dbeafe;
+  --code-bg: #f4f2ef; --code-border: #e2ddd6;
+  --table-stripe: #f8f6f3; --table-header: #f0ede8;
+  --tag-done: #ecfdf5; --tag-done-text: #065f46;
+  --shadow: 0 1px 3px rgba(0,0,0,0.06); --radius: 6px;
+  --sidebar-w: 240px;
+  --font-mono: 'SF Mono','Fira Code','Fira Mono','Roboto Mono',monospace;
+  --font-sans: -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a1a; --bg-card: #242424; --text: #e5e0d8; --text-muted: #9a958c;
+    --border: #3a352e; --accent: #60a5fa; --accent-muted: #1e3a5f;
+    --code-bg: #2a2824; --code-border: #3a352e;
+    --table-stripe: #282622; --table-header: #2e2b26;
+    --tag-done: #064e3b; --tag-done-text: #6ee7b7; --shadow: 0 1px 3px rgba(0,0,0,0.25);
+  }
+}
+html { scroll-behavior: smooth; scroll-padding-top: 20px; }
+body { font-family: var(--font-sans); font-size: 15px; line-height: 1.68; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+
+.layout { display: flex; min-height: 100vh; }
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-w); flex-shrink: 0; position: sticky; top: 0; height: 100vh;
+  overflow-y: auto; background: var(--bg-card); border-right: 1px solid var(--border);
+  padding: 20px 0 32px; font-size: 12.5px; line-height: 1.5; z-index: 10;
+}
+.sidebar-header { padding: 0 18px 14px; border-bottom: 1px solid var(--border); margin-bottom: 6px; position: sticky; top: 0; background: var(--bg-card); z-index: 2; }
+.sidebar-header .title { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.sidebar-header .subtitle { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+.sidebar-nav a {
+  display: block; padding: 4px 18px; font-size: 12px; color: var(--text-muted);
+  text-decoration: none; border-left: 2px solid transparent; transition: all 0.12s;
+}
+.sidebar-nav a:hover { color: var(--text); background: var(--code-bg); }
+.sidebar-nav a.active { border-left-color: var(--accent); color: var(--accent); background: var(--accent-muted); }
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+/* Content */
+.content { flex: 1; min-width: 0; padding: 36px 48px 96px; max-width: 880px; }
+
+h1 { font-size: 26px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.01em; }
+h2 { font-size: 20px; font-weight: 700; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--border); scroll-margin-top: 24px; }
+h3 { font-size: 16px; font-weight: 650; margin: 24px 0 8px; scroll-margin-top: 24px; }
+h4 { font-size: 14px; font-weight: 650; margin: 16px 0 6px; color: var(--text-muted); }
+p { margin: 0 0 12px; }
+strong { font-weight: 650; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
+blockquote {
+  border-left: 3px solid var(--accent); padding: 4px 14px; margin: 14px 0;
+  color: var(--text-muted); background: var(--code-bg); border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 13.5px;
+}
+
+/* Tables */
+.table-wrap { overflow-x: auto; margin: 12px 0 20px; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.5; }
+thead th { background: var(--table-header); font-weight: 650; text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); white-space: nowrap; }
+tbody td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:nth-child(even) { background: var(--table-stripe); }
+tbody tr:last-child td { border-bottom: none; }
+
+/* Code */
+code { font-family: var(--font-mono); font-size: 12.5px; background: var(--code-bg); padding: 2px 5px; border-radius: 3px; border: 1px solid var(--code-border); }
+pre { background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius); padding: 14px 16px; margin: 12px 0 18px; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; box-shadow: var(--shadow); }
+pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+/* Task cards */
+.task-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 22px 26px; margin: 20px 0 28px; box-shadow: var(--shadow);
+}
+.task-card h3 { margin-top: 0; font-size: 17px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.task-card .task-meta { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px; }
+.task-card .task-meta strong { color: var(--text); font-weight: 600; }
+
+/* Checkboxes */
+.cb { display: block; padding: 2px 0 2px 22px; position: relative; font-size: 13.5px; margin: 2px 0; }
+.cb::before { content: '☐'; position: absolute; left: 0; color: var(--text-muted); font-size: 14px; }
+.cb.done::before { content: '☑'; color: var(--accent); }
+
+/* Summary banner */
+.summary { background:var(--accent-muted); border:1px solid var(--accent); border-radius:var(--radius); padding:16px 22px; margin:20px 0 28px; }
+.summary p { margin:0; font-size:14px; }
+
+/* Footer */
+.footer { margin-top: 50px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+
+/* Responsive */
+@media (max-width: 800px) {
+  .sidebar { display: none; }
+  .content { padding: 20px 16px 80px; max-width: 100%; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 18px; }
+  .task-card { padding: 16px; }
+  pre { padding: 12px; font-size: 11.5px; }
+}
+@media print {
+  .sidebar { display: none; }
+  .content { max-width: 100%; padding: 0; }
+  pre, .table-wrap, .task-card { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <div class="title">Embed Implementation Plan</div>
+    <div class="subtitle">13 tasks · 58 tests · ~920 lines</div>
+  </div>
+  <div class="sidebar-nav">
+    <a href="#summary">Summary</a>
+    <a href="#deps">Dependency Graph</a>
+    <a href="#t1">Task 1 · Error Taxonomy</a>
+    <a href="#t2">Task 2 · Bloom Key+Insert</a>
+    <a href="#t3">Task 3 · Bloom FPR+Persist</a>
+    <a href="#t4">Task 4 · Bloom Meta+Threads</a>
+    <a href="#t5">Task 5 · Token Estimation</a>
+    <a href="#t6">Task 6 · BatchBuilder Capacity</a>
+    <a href="#t7">Task 7 · BatchBuilder Limits</a>
+    <a href="#t8">Task 8 · EmbedBatchFn Trait</a>
+    <a href="#t9">Task 9 · PythonEmbedCallback</a>
+    <a href="#t10">Task 10 · Error Classification</a>
+    <a href="#t11">Task 11 · Integration Wiring</a>
+    <a href="#t12">Task 12 · Contract Tests</a>
+    <a href="#t13">Task 13 · Benchmark & Parity</a>
+    <a href="#gate">Final Verification Gate</a>
+  </div>
+</nav>
+
+<main class="content">
+
+<h1>Thin-Rust Embed Stage — Implementation Plan</h1>
+<p>Add bloom filter dedup, token-aware batch sizing, formalized EmbedBatchFn callback interface, and unified error taxonomy to the Rust pipeline.</p>
+<p><strong>Spec:</strong> <code>docs/superpowers/specs/2026-07-21-embedding-provider-integration-design.md</code></p>
+<p><strong>Architecture:</strong> Four new Rust modules plug into PR #380's pipeline. Python callbacks wrapped behind <code>EmbedBatchFn</code> trait. Strict TDD: RED → verify fail → GREEN → verify pass → commit per phase.</p>
+<p><strong>Tech Stack:</strong> Rust 1.82+, PyO3 0.22, fastbloom, crossbeam, rayon, thiserror, duckdb-rs</p>
+
+<h2 id="summary">Task Summary</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Task</th><th>Module</th><th>Tests</th><th>Lines</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Error Taxonomy</td><td><code>src/error.rs</code></td><td>11</td><td>~80</td></tr>
+<tr><td>2</td><td>Bloom — Key + Insert</td><td><code>src/bloom.rs</code></td><td>6</td><td>~60</td></tr>
+<tr><td>3</td><td>Bloom — FPR + Persist</td><td><code>src/bloom.rs</code></td><td>4</td><td>~70</td></tr>
+<tr><td>4</td><td>Bloom — Meta + Threads</td><td><code>src/bloom.rs</code></td><td>4</td><td>~60</td></tr>
+<tr><td>5</td><td>Token Estimation</td><td><code>src/embed/token.rs</code></td><td>6</td><td>~30</td></tr>
+<tr><td>6</td><td>BatchBuilder — Capacity + Budget</td><td><code>src/embed/token.rs</code></td><td>4</td><td>~50</td></tr>
+<tr><td>7</td><td>BatchBuilder — Limits + Edges</td><td><code>src/embed/token.rs</code></td><td>7</td><td>~30</td></tr>
+<tr><td>8</td><td>EmbedBatchFn Trait + Mock</td><td><code>src/embed/mod.rs</code></td><td>7</td><td>~70</td></tr>
+<tr><td>9</td><td>PythonEmbedCallback</td><td><code>src/embed/callback.rs</code></td><td>0*</td><td>~50</td></tr>
+<tr><td>10</td><td>Error Classification</td><td><code>src/embed/callback.rs</code></td><td>3</td><td>~60</td></tr>
+<tr><td>11</td><td>Integration Wiring</td><td><code>src/pipeline/pipeline.rs</code></td><td>0*</td><td>~120</td></tr>
+<tr><td>12</td><td>Contract Tests (Python)</td><td><code>tests/contracts/</code></td><td>4</td><td>~120</td></tr>
+<tr><td>13</td><td>Benchmark & Parity</td><td><code>scripts/</code></td><td>—</td><td>~120</td></tr>
+<tr style="font-weight:650; border-top:2px solid var(--border)"><td></td><td><strong>Total</strong></td><td></td><td><strong>58</strong></td><td><strong>~920</strong></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="deps">Dependency Graph</h2>
+<pre><code>Task 1  (error.rs) ──────────────────────────────────────────────┐
+Task 2  (bloom key+insert)                                         │
+Task 3  (bloom persist)   ── no deps on 1,4-8 ──────────────────┐ │
+Task 4  (bloom meta)      ── these 3 run in PARALLEL ───────────┘ │
+Task 5  (token estimate)                                           │
+Task 6  (token budget)    ── no deps on other modules ──────────── │
+Task 7  (token edges)                                              │
+                                                                    │
+Task 8  (EmbedBatchFn)    ── no deps ────────────────────────────  │
+Task 9  (PythonCallback)  ──── depends on Task 8 ────────────────  │
+Task 10 (classify errors) ──── depends on Task 1 ────────────────  │
+                                                                    │
+Task 11 (integration)     ───── depends on Tasks 4,7,9,10 ─────────┘
+Task 12 (contract tests)  ───── depends on Task 11
+Task 13 (benchmark)       ───── depends on Task 12</code></pre>
+
+<div class="summary">
+  <p><strong>Parallelism:</strong> Tasks 2-4 (bloom), Tasks 5-7 (token), and Task 8 (trait) can run in parallel via subagent dispatch.</p>
+</div>
+
+<h2>Global Constraints</h2>
+<ul>
+  <li>Rust MSRV: 1.82 · <code>#![forbid(unsafe_code)]</code> at crate root</li>
+  <li>No <code>print!()</code> / <code>eprintln!()</code> — use <code>log</code> crate via <code>pyo3-log</code></li>
+  <li>No <code>.unwrap()</code> at PyO3 boundary — <code>.expect("reason")</code> OK for internal invariants</li>
+  <li>Borrowed <code>&amp;str</code> → owned <code>String</code> before <code>py.allow_threads()</code></li>
+  <li><code>cargo clippy --all-targets -- -D warnings</code> after every task</li>
+  <li><code>cargo fmt --check</code> after every task</li>
+  <li>Commit after each TDD phase — never across task boundaries</li>
+</ul>
+
+<!-- ═══════ TASK 1 ═══════ -->
+<div class="task-card">
+<h3 id="t1">Task 1: Error Taxonomy — is_fatal() Matrix + PartialEq</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/error.rs</code></span>
+  <span><strong>Tests:</strong> 11</span>
+  <span><strong>Produces:</strong> <code>PipelineError</code> + <code>is_fatal()</code></span>
+</div>
+<p>Add <code>PipelineError</code> enum alongside existing <code>DbError</code>. 7 variants: <code>Auth</code>, <code>BadRequest</code>, <code>Cancelled</code> (fatal); <code>ProviderError</code>, <code>RateLimited</code>, <code>DbError</code>, <code>IoError</code> (non-fatal). Derive <code>PartialEq</code> for test assertions.</p>
+
+<p class="cb"><strong>Step 1:</strong> Write 7 RED tests (auth_is_fatal, bad_request_is_fatal, cancelled_is_fatal, provider_error_is_not_fatal, rate_limited_is_not_fatal, same_error_variants_are_equal, different_error_variants_are_not_equal)</p>
+<p class="cb"><strong>Step 2:</strong> <code>cargo test error::tests</code> → 7/7 FAIL (RED)</p>
+<p class="cb"><strong>Step 3:</strong> Implement <code>PipelineError</code> enum + <code>is_fatal()</code> + <code>#[derive(PartialEq)]</code></p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo test error::tests</code> → 7/7 PASS (GREEN)</p>
+<p class="cb"><strong>Step 5:</strong> Add 4 display formatting tests (auth_error_display_includes_provider, bad_request_error_display_includes_message, rate_limited_error_display_includes_provider, all_fatal_variants_are_exhaustive)</p>
+<p class="cb"><strong>Step 6:</strong> <code>cargo test error::tests</code> → 11/11 PASS</p>
+<p class="cb"><strong>Step 7:</strong> <code>cargo clippy --all-targets -- -D warnings && cargo fmt --check</code></p>
+<p class="cb"><strong>Step 8:</strong> Commit: <code>feat(error): add PipelineError enum with is_fatal() + PartialEq + display</code></p>
+</div>
+
+<!-- ═══════ TASK 2 ═══════ -->
+<div class="task-card">
+<h3 id="t2">Task 2: Bloom Filter — Key Construction + Insert/Contains</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Create <code>src/bloom.rs</code>, Modify <code>src/lib.rs</code>, <code>Cargo.toml</code></span>
+  <span><strong>Tests:</strong> 6</span>
+  <span><strong>Produces:</strong> <code>bloom_key()</code>, <code>AtomicBloomFilter</code></span>
+</div>
+<p>Add <code>fastbloom</code> dependency. Implement <code>bloom_key(content_hash, provider, model, dims) → String</code> and <code>AtomicBloomFilter</code> wrapper with <code>with_false_pos()</code>, <code>insert()</code>, <code>contains()</code>.</p>
+
+<p class="cb"><strong>Step 1:</strong> Add <code>fastbloom = { version = "0.7", features = ["serde"] }</code> to Cargo.toml</p>
+<p class="cb"><strong>Step 2:</strong> Write 6 RED tests (bloom_key_includes_all_components, bloom_key_distinguishes_providers, bloom_key_distinguishes_models, bloom_key_distinguishes_dims_same_model, bloom_insert_then_contains, bloom_does_not_contain_uninserted)</p>
+<p class="cb"><strong>Step 3:</strong> <code>cargo test bloom::tests</code> → verify compiles and runs</p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo clippy --all-targets -- -D warnings && cargo fmt --check</code></p>
+<p class="cb"><strong>Step 5:</strong> Commit: <code>feat(bloom): add bloom_key() + AtomicBloomFilter</code></p>
+</div>
+
+<!-- ═══════ TASK 3 ═══════ -->
+<div class="task-card">
+<h3 id="t3">Task 3: Bloom Filter — FPR Validation + Persistence</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/bloom.rs</code>, <code>Cargo.toml</code></span>
+  <span><strong>Tests:</strong> 4</span>
+  <span><strong>Produces:</strong> <code>persist_bloom()</code>, <code>load_bloom_from_disk()</code></span>
+</div>
+<p>Add FPR bounds test (100k inserts, verify &lt;2% FPR). Add persist/load roundtrip with fastbloom serde. Handle corrupted files and missing files.</p>
+
+<p class="cb"><strong>Step 1:</strong> Add <code>tempfile = "3"</code> to dev-dependencies</p>
+<p class="cb"><strong>Step 2:</strong> Write 4 RED tests (bloom_false_positive_rate_within_bounds, persist_and_load_bloom_roundtrip, corrupted_bloom_file_falls_back, missing_bloom_file_returns_none)</p>
+<p class="cb"><strong>Step 3:</strong> <code>cargo test bloom::tests</code> → 4 NEW FAIL (RED)</p>
+<p class="cb"><strong>Step 4:</strong> Implement persist_bloom() + load_bloom_from_disk() using fastbloom serde (or bincode)</p>
+<p class="cb"><strong>Step 5:</strong> <code>cargo test bloom::tests</code> → 10/10 PASS (GREEN)</p>
+<p class="cb"><strong>Step 6:</strong> Commit: <code>feat(bloom): add FPR validation + persist/load</code></p>
+</div>
+
+<!-- ═══════ TASK 4 ═══════ -->
+<div class="task-card">
+<h3 id="t4">Task 4: Bloom Filter — Meta Sidecar + Thread Safety</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/bloom.rs</code></span>
+  <span><strong>Tests:</strong> 4</span>
+  <span><strong>Produces:</strong> <code>BloomMeta</code>, <code>persist_meta()</code>, <code>validate_bloom_meta()</code></span>
+</div>
+<p>Add JSON sidecar <code>.bloom.meta</code> with <code>{provider, model}</code>. On startup, validate meta matches config — mismatch → discard + rebuild. 8-thread concurrent read test.</p>
+
+<p class="cb"><strong>Step 1:</strong> Write 4 RED tests (meta_mismatch_discards_bloom, meta_match_keeps_bloom, bloom_empty_content_hash_always_skipped_by_caller, bloom_concurrent_reads_across_threads)</p>
+<p class="cb"><strong>Step 2:</strong> <code>cargo test bloom::tests</code> → 4 NEW FAIL (RED)</p>
+<p class="cb"><strong>Step 3:</strong> Implement BloomMeta + persist_meta() + validate_bloom_meta()</p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo test bloom::tests</code> → 14/14 PASS (GREEN)</p>
+<p class="cb"><strong>Step 5:</strong> Commit: <code>feat(bloom): add BloomMeta sidecar + model-change detection</code></p>
+</div>
+
+<!-- ═══════ TASK 5 ═══════ -->
+<div class="task-card">
+<h3 id="t5">Task 5: Token Estimation — estimate_tokens()</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Create <code>src/embed/mod.rs</code>, <code>src/embed/token.rs</code>, Modify <code>src/lib.rs</code></span>
+  <span><strong>Tests:</strong> 6</span>
+  <span><strong>Produces:</strong> <code>estimate_tokens()</code>, <code>BatchConfig</code></span>
+</div>
+<p>Create embed module scaffold. <code>estimate_tokens(text) = text.len() / 3</code>. <code>BatchConfig</code> struct with <code>max_chunks_per_batch</code>, <code>max_tokens_per_chunk</code>, <code>batch_token_budget: Option&lt;usize&gt;</code>.</p>
+
+<p class="cb"><strong>Step 1:</strong> Create <code>src/embed/mod.rs</code> (pub mod token; pub mod callback;)</p>
+<p class="cb"><strong>Step 2:</strong> Register <code>mod embed;</code> in <code>src/lib.rs</code></p>
+<p class="cb"><strong>Step 3:</strong> Write estimate_tokens() + BatchConfig + 6 tests in token.rs</p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo test embed::token::tests</code> → 6/6 PASS</p>
+<p class="cb"><strong>Step 5:</strong> Commit: <code>feat(token): add estimate_tokens() + BatchConfig</code></p>
+</div>
+
+<!-- ═══════ TASK 6 ═══════ -->
+<div class="task-card">
+<h3 id="t6">Task 6: BatchBuilder — Capacity + Token Budget Flush</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/embed/token.rs</code></span>
+  <span><strong>Tests:</strong> 4</span>
+  <span><strong>Produces:</strong> <code>BatchBuilder</code> with <code>push()</code> capacity + budget logic</span>
+</div>
+<p><code>BatchBuilder::push()</code> flushes when capacity or token budget exceeded. <code>None</code> budget (OpenAI) never flushes on tokens. Each flush returns the accumulated batch.</p>
+
+<p class="cb"><strong>Step 1:</strong> Write BatchChunk struct + BatchBuilder + 4 RED tests</p>
+<p class="cb"><strong>Step 2:</strong> <code>cargo test embed::token::tests</code> → 4 NEW FAIL (RED)</p>
+<p class="cb"><strong>Step 3:</strong> Implement push() with capacity check and token budget check</p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo test embed::token::tests</code> → 10/10 PASS (GREEN)</p>
+<p class="cb"><strong>Step 5:</strong> Commit: <code>feat(token): add BatchBuilder with capacity + budget flush</code></p>
+</div>
+
+<!-- ═══════ TASK 7 ═══════ -->
+<div class="task-card">
+<h3 id="t7">Task 7: BatchBuilder — Chunk Limits + Manual Flush + Edge Cases</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/embed/token.rs</code></span>
+  <span><strong>Tests:</strong> 7</span>
+  <span><strong>Produces:</strong> Full BatchBuilder with <code>flush()</code> + edge case handling</span>
+</div>
+<p>Oversized chunks returned as None. Manual flush() drains remaining. Single-chunk-exceeds-budget edge case. Token tracking resets after flush.</p>
+
+<p class="cb"><strong>Step 1:</strong> Write 7 RED tests (oversized_chunk_skipped, accepts_chunk_under_limit, boundary_chunk_at_token_limit, manual_flush_returns_remaining, flush_empty_returns_none, single_chunk_exceeds_budget, token_tracking_resets_after_flush)</p>
+<p class="cb"><strong>Step 2:</strong> <code>cargo test embed::token::tests</code> → 7 NEW FAIL (RED)</p>
+<p class="cb"><strong>Step 3:</strong> Implement chunk limit guard, flush(), empty-builder edge case</p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo test embed::token::tests</code> → 17/17 PASS (GREEN)</p>
+<p class="cb"><strong>Step 5:</strong> <code>cargo clippy --all-targets -- -D warnings && cargo fmt --check</code></p>
+<p class="cb"><strong>Step 6:</strong> Commit: <code>feat(token): add chunk limits, manual flush, edge cases</code></p>
+</div>
+
+<!-- ═══════ TASK 8 ═══════ -->
+<div class="task-card">
+<h3 id="t8">Task 8: EmbedBatchFn Trait + Mock Implementation</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/embed/mod.rs</code></span>
+  <span><strong>Tests:</strong> 7</span>
+  <span><strong>Produces:</strong> <code>EmbedBatchFn</code> trait, <code>EmbedBatchResult</code>, <code>BatchCallStats</code>, <code>MockEmbedFn</code></span>
+</div>
+<p>Define <code>EmbedBatchFn: Send + Sync</code> trait. <code>EmbedBatchResult { vectors: Vec&lt;Option&lt;Vec&lt;f32&gt;&gt;&gt;, stats }</code>. Mock for testing without Python. Verify object safety.</p>
+
+<p class="cb"><strong>Step 1:</strong> Write EmbedBatchFn trait + MockEmbedFn + 7 tests</p>
+<p class="cb"><strong>Step 2:</strong> <code>cargo test embed::tests</code> → 7/7 PASS</p>
+<p class="cb"><strong>Step 3:</strong> <code>cargo clippy --all-targets -- -D warnings && cargo fmt --check</code></p>
+<p class="cb"><strong>Step 4:</strong> Commit: <code>feat(embed): add EmbedBatchFn trait + EmbedBatchResult + Mock (7 tests)</code></p>
+</div>
+
+<!-- ═══════ TASK 9 ═══════ -->
+<div class="task-card">
+<h3 id="t9">Task 9: PythonEmbedCallback + Vector Extraction</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/embed/mod.rs</code>, Create <code>src/embed/callback.rs</code></span>
+  <span><strong>Tests:</strong> 0 (tested in Task 12)</span>
+  <span><strong>Produces:</strong> <code>PythonEmbedCallback</code>, <code>extract_vectors_from_python()</code></span>
+</div>
+<p>Wrap Python <code>embed_batch_callback</code> behind <code>EmbedBatchFn</code>. <code>extract_vectors_from_python()</code> handles List[List[float]], None entries, malformed returns, wrong count.</p>
+
+<p class="cb"><strong>Step 1:</strong> Implement PythonEmbedCallback with Py&lt;PyAny&gt; callable</p>
+<p class="cb"><strong>Step 2:</strong> Implement extract_vectors_from_python() in callback.rs</p>
+<p class="cb"><strong>Step 3:</strong> <code>cargo check</code> → compiles clean</p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo clippy --all-targets -- -D warnings && cargo fmt --check</code></p>
+<p class="cb"><strong>Step 5:</strong> Commit: <code>feat(embed): add PythonEmbedCallback + extract_vectors_from_python()</code></p>
+</div>
+
+<!-- ═══════ TASK 10 ═══════ -->
+<div class="task-card">
+<h3 id="t10">Task 10: Error Classification — classify_python_embed_error()</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/embed/callback.rs</code></span>
+  <span><strong>Tests:</strong> 3</span>
+  <span><strong>Produces:</strong> <code>classify_python_embed_error()</code></span>
+</div>
+<p>Map Python exception types to PipelineError variants: AuthenticationError→Auth, RateLimitError→RateLimited, BadRequestError→BadRequest (context length → ProviderError). Unknown → ProviderError (safe non-fatal default).</p>
+
+<p class="cb"><strong>Step 1:</strong> Write classify_python_embed_error() + 3 RED tests</p>
+<p class="cb"><strong>Step 2:</strong> <code>cargo test embed::callback::tests</code> → 3/3 PASS</p>
+<p class="cb"><strong>Step 3:</strong> <code>cargo clippy --all-targets -- -D warnings && cargo fmt --check</code></p>
+<p class="cb"><strong>Step 4:</strong> Commit: <code>feat(embed): add classify_python_embed_error() (3 tests)</code></p>
+</div>
+
+<!-- ═══════ TASK 11 ═══════ -->
+<div class="task-card">
+<h3 id="t11">Task 11: Integration Wiring — Wire Bloom + Token + Callback into Pipeline</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Modify <code>src/bloom.rs</code>, <code>src/pipeline/pipeline.rs</code></span>
+  <span><strong>Tests:</strong> 0 (tested by Tasks 12-13)</span>
+  <span><strong>Depends on:</strong> PR #380 pipeline module</span>
+</div>
+<p>Add <code>load_or_rebuild_bloom()</code> and <code>populate_bloom_from_db()</code> to bloom.rs. Wire the per-chunk decision tree into pipeline.rs batch loop: bloom check → token estimation → BatchBuilder → EmbedBatchFn dispatch.</p>
+
+<p class="cb"><strong>Step 1:</strong> Implement load_or_rebuild_bloom() — load from disk or rebuild</p>
+<p class="cb"><strong>Step 2:</strong> Implement populate_bloom_from_db() — JOIN chunks+embeddings_N</p>
+<p class="cb"><strong>Step 3:</strong> Wire per-chunk bloom+token+dispatch into pipeline.rs batch loop</p>
+<p class="cb"><strong>Step 4:</strong> <code>cargo check && cargo clippy && cargo fmt --check</code></p>
+<p class="cb"><strong>Step 5:</strong> Commit: <code>feat(pipeline): wire bloom + token + EmbedBatchFn</code></p>
+</div>
+
+<!-- ═══════ TASK 12 ═══════ -->
+<div class="task-card">
+<h3 id="t12">Task 12: Python Contract Tests (Integration)</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Create <code>tests/contracts/test_bloom_pipeline.py</code></span>
+  <span><strong>Tests:</strong> 4</span>
+</div>
+<p>End-to-end tests using mock embed callback + real Rust pipeline. CHUNKHOUND_USE_RUST=1. Verify: 2nd run produces 0 callbacks, bloom persists across restarts, batches respect size limits, Rust output matches Python byte-identical.</p>
+
+<p class="cb"><strong>Step 1:</strong> Write test class with mock callback fixture + 4 contract tests</p>
+<p class="cb"><strong>Step 2:</strong> <code>uv run pytest tests/contracts/test_bloom_pipeline.py -v</code></p>
+<p class="cb"><strong>Step 3:</strong> <code>uv run pytest tests/test_smoke.py -v -n auto</code> — all pass</p>
+<p class="cb"><strong>Step 4:</strong> Commit: <code>test(contract): add bloom pipeline contract tests</code></p>
+</div>
+
+<!-- ═══════ TASK 13 ═══════ -->
+<div class="task-card">
+<h3 id="t13">Task 13: Benchmark & Parity Verification</h3>
+<div class="task-meta">
+  <span><strong>Files:</strong> Create <code>scripts/bench_embed_parity.py</code></span>
+  <span><strong>Tests:</strong> Benchmark script</span>
+</div>
+<p>Generate synthetic files → run Python path → run Rust path → compare DB output byte-for-byte → report speedup. 3-run averaging.</p>
+
+<p class="cb"><strong>Step 1:</strong> Write bench_embed_parity.py with generate → run → compare → report</p>
+<p class="cb"><strong>Step 2:</strong> <code>uv run python scripts/bench_embed_parity.py --files 20 --chunks 15 --runs 3</code></p>
+<p class="cb"><strong>Step 3:</strong> Verify: Python and Rust produce identical output. Speedup reported.</p>
+<p class="cb"><strong>Step 4:</strong> Commit: <code>bench: add embed pipeline parity benchmark</code></p>
+</div>
+
+<!-- ═══════ FINAL GATE ═══════ -->
+<h2 id="gate">Final Verification Gate</h2>
+<p>Before declaring done, run ALL checks:</p>
+
+<pre><code># Rust gate
+cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+
+# Python gate
+uv run pytest tests/contracts/ -v
+uv run pytest tests/test_smoke.py -v -n auto
+
+# Benchmark gate
+uv run python scripts/bench_embed_parity.py --files 20 --chunks-per-file 15 --runs 3</code></pre>
+
+<div class="summary">
+  <p><strong>Expected:</strong> All 58 Rust tests pass · All 4 contract tests pass · All smoke tests pass · Parity benchmark PASS · Speedup reported</p>
+</div>
+
+<div class="footer">
+  <p>Generated 2026-07-21 · 13 tasks · 63 checkboxes · ~920 lines new Rust · 0 Python changes</p>
+  <p><a href="./2026-07-21-embedding-provider-integration-design.html">← Back to design spec</a></p>
+</div>
+
+</main>
+</div>
+</body>
+</html>
