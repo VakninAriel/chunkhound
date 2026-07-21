@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
+use crate::error::PipelineError;
+
 /// Extract vectors from a Python callback return value.
 /// Handles: List[List[float]], List[None], mixed, malformed, wrong count.
 pub fn extract_vectors_from_python(
@@ -39,3 +41,46 @@ pub fn extract_vectors_from_python(
 
     vectors
 }
+
+/// Classify a Python exception from the embed callback into a typed PipelineError.
+/// Unknown exceptions default to ProviderError (non-fatal).
+pub fn classify_python_embed_error(py: Python<'_>, err: &PyErr) -> PipelineError {
+    let msg = err.to_string();
+    let type_name = err.get_type_bound(py).name().map(|n| n.to_string()).unwrap_or_default();
+
+    match type_name.as_str() {
+        "AuthenticationError" => PipelineError::Auth {
+            provider: "unknown".into(),
+            message: msg,
+        },
+        "RateLimitError" => PipelineError::RateLimited {
+            provider: "unknown".into(),
+            retry_after_secs: None,
+        },
+        "BadRequestError" => {
+            if msg.contains("context length") || msg.contains("maximum context length") {
+                PipelineError::ProviderError {
+                    provider: "unknown".into(),
+                    message: msg,
+                }
+            } else {
+                PipelineError::BadRequest {
+                    provider: "unknown".into(),
+                    message: msg,
+                }
+            }
+        }
+        "APITimeoutError" | "APIConnectionError" | "Timeout" | "ConnectionError" => {
+            PipelineError::ProviderError {
+                provider: "unknown".into(),
+                message: msg,
+            }
+        }
+        _ => PipelineError::ProviderError {
+            provider: "unknown".into(),
+            message: msg,
+        },
+    }
+}
+
+

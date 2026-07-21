@@ -1,0 +1,18 @@
+[package]
+name = "embed-tests"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+# Standalone test crate — deliberately does NOT depend on chunkhound_native
+# because that crate uses pyo3's extension-module feature, which is mutually
+# exclusive with auto-initialize on Linux (extension-module suppresses the
+# libpython link directive).
+#
+# Instead, this crate includes the source under test directly via #[path]
+# modules, compiled with pyo3/auto-initialize so Python::with_gil works.
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+thiserror = "1"
