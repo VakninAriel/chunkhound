@@ -19,9 +19,13 @@ ignore     = "0.4"
 duckdb     = { version = "1" }
 log        = "0.4"
 fastbloom  = "0.7"
+bincode    = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror  = "1"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.dev]
 opt-level = 0
