@@ -1,6 +1,9 @@
 pub mod callback;
 pub mod token;
 
+use crate::embed::callback::extract_vectors_from_python;
+use pyo3::prelude::*;
+
 /// A batch embedding function — stateless, synchronous from Rust's perspective.
 /// Each call is independent; concurrency is handled by the rayon caller.
 #[allow(dead_code)]
@@ -26,6 +29,45 @@ pub struct EmbedBatchResult {
 pub struct BatchCallStats {
     pub api_calls: u32,
     pub total_latency_ms: u64,
+}
+
+/// Wraps a Python callable behind the EmbedBatchFn trait.
+pub struct PythonEmbedCallback {
+    callable: Py<PyAny>,
+}
+
+impl PythonEmbedCallback {
+    #[allow(dead_code)]
+    pub fn new(callable: Py<PyAny>) -> Self {
+        Self { callable }
+    }
+}
+
+impl EmbedBatchFn for PythonEmbedCallback {
+    fn embed_batch(
+        &self,
+        texts: &[String],
+        provider: &str,
+        model: &str,
+        _dims: usize,
+    ) -> EmbedBatchResult {
+        Python::with_gil(|py| {
+            let py_texts: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+            match self.callable.call1(py, (py_texts, provider, model)) {
+                Ok(result) => {
+                    let bound = result.bind(py);
+                    EmbedBatchResult {
+                        vectors: extract_vectors_from_python(py, bound, texts.len()),
+                        stats: BatchCallStats::default(),
+                    }
+                }
+                Err(_e) => EmbedBatchResult {
+                    vectors: vec![None; texts.len()],
+                    stats: BatchCallStats::default(),
+                },
+            }
+        })
+    }
 }
 
 #[cfg(test)]
