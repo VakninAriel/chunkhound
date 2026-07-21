@@ -11,6 +11,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::PipelineError;
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct BloomMeta {
+    pub provider: String,
+    pub model: String,
+}
+
 /// Wrapper providing thread-safe concurrent reads via Arc.
 /// Inserts require &mut self (single writer).
 pub struct AtomicBloomFilter {
@@ -97,6 +103,30 @@ pub fn load_bloom_from_disk(path: &Path) -> Result<Option<AtomicBloomFilter>, Pi
             path: path.to_path_buf(),
             message: e.to_string(),
         }),
+    }
+}
+
+// ── BloomMeta persistence & validation ──
+
+pub fn persist_meta(meta: &BloomMeta, path: &Path) -> Result<(), PipelineError> {
+    let json = serde_json::to_string_pretty(meta).map_err(|e| PipelineError::IoError {
+        path: path.to_path_buf(),
+        message: e.to_string(),
+    })?;
+    fs::write(path, json).map_err(|e| PipelineError::IoError {
+        path: path.to_path_buf(),
+        message: e.to_string(),
+    })?;
+    Ok(())
+}
+
+pub fn validate_bloom_meta(meta_path: &Path, provider: &str, model: &str) -> bool {
+    match fs::read_to_string(meta_path) {
+        Ok(json) => match serde_json::from_str::<BloomMeta>(&json) {
+            Ok(meta) => meta.provider == provider && meta.model == model,
+            Err(_) => false,
+        },
+        Err(_) => false,
     }
 }
 
@@ -195,6 +225,71 @@ mod tests {
 
         let result = load_bloom_from_disk(&bloom_path);
         assert!(result.is_err(), "corrupted bloom must fail to load");
+    }
+
+    // ── BloomMeta ──
+
+    #[test]
+    fn meta_mismatch_discards_bloom() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let meta_path = temp_dir.path().join("embeddings.bloom.meta");
+
+        let meta = BloomMeta {
+            provider: "openai".into(),
+            model: "text-embedding-3-small".into(),
+        };
+        persist_meta(&meta, &meta_path).unwrap();
+
+        let valid = validate_bloom_meta(&meta_path, "openai", "text-embedding-3-large");
+        assert!(!valid, "model mismatch must invalidate bloom");
+    }
+
+    #[test]
+    fn meta_match_keeps_bloom() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let meta_path = temp_dir.path().join("embeddings.bloom.meta");
+
+        let meta = BloomMeta {
+            provider: "openai".into(),
+            model: "text-embedding-3-small".into(),
+        };
+        persist_meta(&meta, &meta_path).unwrap();
+
+        let valid = validate_bloom_meta(&meta_path, "openai", "text-embedding-3-small");
+        assert!(valid, "matching meta must keep bloom");
+    }
+
+    #[test]
+    fn bloom_empty_content_hash_skipped() {
+        let key = bloom_key("", "openai", "model", 1536);
+        assert!(
+            !key.is_empty(),
+            "separator ensures non-empty even with empty hash"
+        );
+    }
+
+    #[test]
+    fn bloom_concurrent_reads_across_threads() {
+        let mut bloom = AtomicBloomFilter::with_false_pos(0.01, 100_000);
+        for i in 0..50_000 {
+            bloom.insert(&format!("hash{i}:openai:model:1536"));
+        }
+
+        let bloom = std::sync::Arc::new(bloom);
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let b = std::sync::Arc::clone(&bloom);
+                std::thread::spawn(move || {
+                    for i in 0..10_000 {
+                        let _ = b.contains(&format!("hash{i}:openai:model:1536"));
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 
     #[test]
