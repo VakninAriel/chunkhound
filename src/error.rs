@@ -50,13 +50,19 @@ pub enum PipelineError {
 
     #[error("I/O error at {path}: {message}")]
     IoError { path: PathBuf, message: String },
+
+    #[error("context length exceeded: {0}")]
+    ContextLengthExceeded(String),
+
+    #[error("response format error: {0}")]
+    ResponseFormat(String),
 }
 
 impl PipelineError {
     pub fn is_fatal(&self) -> bool {
         matches!(
             self,
-            Self::Auth { .. } | Self::BadRequest { .. } | Self::Cancelled
+            Self::Auth { .. } | Self::BadRequest { .. } | Self::Cancelled | Self::ResponseFormat(_)
         )
     }
 }
@@ -191,11 +197,42 @@ mod tests {
                 path: PathBuf::new(),
                 message: "".into(),
             },
+            PipelineError::ContextLengthExceeded("".into()),
+            PipelineError::ResponseFormat("".into()),
         ];
         assert_eq!(
             errors.len(),
-            7,
-            "all 7 PipelineError variants must be listed"
+            9,
+            "all 9 PipelineError variants must be listed"
         );
+    }
+
+    // --- Phase 3: ContextLengthExceeded + ResponseFormat ---
+
+    #[test]
+    fn context_length_exceeded_is_not_fatal() {
+        let err = PipelineError::ContextLengthExceeded("max tokens exceeded".into());
+        assert!(
+            !err.is_fatal(),
+            "ContextLengthExceeded is retryable — not fatal"
+        );
+    }
+
+    #[test]
+    fn response_format_is_fatal() {
+        let err = PipelineError::ResponseFormat("invalid json".into());
+        assert!(err.is_fatal(), "ResponseFormat is fatal — cannot recover");
+    }
+
+    #[test]
+    fn context_length_exceeded_display_includes_message() {
+        let err = PipelineError::ContextLengthExceeded("max tokens exceeded".into());
+        assert!(err.to_string().contains("max tokens exceeded"));
+    }
+
+    #[test]
+    fn response_format_display_includes_message() {
+        let err = PipelineError::ResponseFormat("invalid json".into());
+        assert!(err.to_string().contains("invalid json"));
     }
 }
