@@ -1,4 +1,5 @@
 pub mod callback;
+pub mod factory;
 pub mod openai;
 pub mod retry;
 pub mod token;

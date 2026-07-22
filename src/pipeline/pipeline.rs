@@ -4,7 +4,11 @@
 
 use std::path::PathBuf;
 
+use pyo3::prelude::*;
+
 use crate::bloom::{bloom_key, load_or_rebuild_bloom};
+use crate::embed::factory::create_embed_fn;
+use crate::embed::openai::EmbedConfig;
 use crate::embed::token::{estimate_tokens, BatchBuilder, BatchChunk, BatchConfig};
 use crate::embed::EmbedBatchFn;
 use crate::error::PipelineError;
@@ -19,6 +23,34 @@ pub struct PipelineConfig {
     pub output_dims: usize,
     pub max_chunks_per_batch: usize,
     pub incremental: bool,
+}
+
+impl PipelineConfig {
+    /// Construct a PipelineConfig using the provider factory.
+    /// Routes to Rust-native providers for openai/voyageai, falling back to
+    /// `py_callback` for unknown providers.
+    #[allow(dead_code)]
+    pub fn from_provider_config(
+        db_path: PathBuf,
+        embed_cfg: &EmbedConfig,
+        py_callback: Option<Py<PyAny>>,
+        output_dims: usize,
+        max_chunks_per_batch: usize,
+        incremental: bool,
+    ) -> Result<Self, PipelineError> {
+        let provider = embed_cfg.provider.clone();
+        let model = embed_cfg.model.clone();
+        let embed_batch_callback = create_embed_fn(embed_cfg, py_callback)?;
+        Ok(PipelineConfig {
+            db_path,
+            embed_batch_callback,
+            provider,
+            model,
+            output_dims,
+            max_chunks_per_batch,
+            incremental,
+        })
+    }
 }
 
 impl std::fmt::Debug for PipelineConfig {
@@ -629,5 +661,98 @@ mod tests {
         assert_eq!(stats.batches_sent, 3, "ceil(5 / 2) = 3 batches");
         assert_eq!(stats.embeddings_sent, 5, "all 5 embedded");
         assert_eq!(stats.chunks_failed, 0);
+    }
+
+    // ── Factory integration tests ──
+
+    #[test]
+    fn from_provider_config_constructs_openai() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cfg = crate::embed::openai::EmbedConfig {
+            provider: "openai".into(),
+            model: "text-embedding-3-small".into(),
+            api_key: "sk-test".into(),
+            base_url: None,
+            output_dims: None,
+            matryoshka: false,
+            api_version: None,
+            ssl_verify: true,
+            is_azure: None,
+        };
+        let config = PipelineConfig::from_provider_config(
+            temp_dir.path().to_path_buf(),
+            &cfg,
+            None,
+            1536,
+            10,
+            false,
+        );
+        assert!(
+            config.is_ok(),
+            "from_provider_config must succeed for openai"
+        );
+    }
+
+    #[test]
+    fn from_provider_config_falls_back_to_python() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cfg = crate::embed::openai::EmbedConfig {
+            provider: "cohere".into(),
+            model: "embed-english-v3".into(),
+            api_key: "test-key".into(),
+            base_url: None,
+            output_dims: None,
+            matryoshka: false,
+            api_version: None,
+            ssl_verify: true,
+            is_azure: None,
+        };
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let cb = py
+                .eval_bound("lambda texts, provider, model: [[1.0]]", None, None)
+                .unwrap()
+                .unbind();
+            let config = PipelineConfig::from_provider_config(
+                temp_dir.path().to_path_buf(),
+                &cfg,
+                Some(cb),
+                1024,
+                10,
+                false,
+            );
+            assert!(
+                config.is_ok(),
+                "from_provider_config must fall back to Python callback"
+            );
+        });
+    }
+
+    #[test]
+    fn from_provider_config_errors_without_callback() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cfg = crate::embed::openai::EmbedConfig {
+            provider: "cohere".into(),
+            model: "embed-english-v3".into(),
+            api_key: "test-key".into(),
+            base_url: None,
+            output_dims: None,
+            matryoshka: false,
+            api_version: None,
+            ssl_verify: true,
+            is_azure: None,
+        };
+        let config = PipelineConfig::from_provider_config(
+            temp_dir.path().to_path_buf(),
+            &cfg,
+            None,
+            1024,
+            10,
+            false,
+        );
+        assert!(
+            config.is_err(),
+            "from_provider_config must error for unknown provider without callback"
+        );
     }
 }
