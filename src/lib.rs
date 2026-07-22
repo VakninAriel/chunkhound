@@ -8,6 +8,7 @@ mod db;
 mod db_writer;
 mod embed;
 mod error;
+mod pipeline;
 mod types;
 
 use ignore::gitignore::GitignoreBuilder;

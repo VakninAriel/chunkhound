@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub const CHARS_PER_TOKEN: usize = 3;
 
 pub fn estimate_tokens(text: &str) -> usize {

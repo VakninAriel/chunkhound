@@ -5,7 +5,9 @@
 use std::fs;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
+use std::sync::Arc;
 
+use duckdb::params;
 use fastbloom::BloomFilter;
 use serde::{Deserialize, Serialize};
 
@@ -118,6 +120,91 @@ pub fn persist_meta(meta: &BloomMeta, path: &Path) -> Result<(), PipelineError> 
         message: e.to_string(),
     })?;
     Ok(())
+}
+
+/// Load bloom from disk, or rebuild from DB if absent/mismatched.
+pub fn load_or_rebuild_bloom(
+    db_dir: &Path,
+    provider: &str,
+    model: &str,
+) -> Result<Arc<AtomicBloomFilter>, PipelineError> {
+    let bloom_path = db_dir.join("embeddings.bloom");
+    let meta_path = db_dir.join("embeddings.bloom.meta");
+
+    // Try load from disk
+    if bloom_path.exists() && validate_bloom_meta(&meta_path, provider, model) {
+        if let Ok(Some(bloom)) = load_bloom_from_disk(&bloom_path) {
+            log::info!("Bloom filter loaded from disk");
+            return Ok(Arc::new(bloom));
+        }
+    }
+
+    // Rebuild — placeholder: actual DB query will populate via populate_bloom_from_db()
+    log::info!("Bloom filter rebuild required — creating empty filter");
+    let bloom = AtomicBloomFilter::with_false_pos(0.01, 1_000_000);
+    // Caller is responsible for populating via populate_bloom_from_db() and
+    // persisting the result.
+    Ok(Arc::new(bloom))
+}
+
+/// Populate bloom filter from existing embeddings in the database.
+/// Called during pipeline startup when bloom needs rebuilding.
+/// Accepts `Option<&Connection>` to support stub/test mode — returns Ok(0) when None.
+pub fn populate_bloom_from_db(
+    bloom: &mut AtomicBloomFilter,
+    conn: Option<&duckdb::Connection>,
+    provider: &str,
+    model: &str,
+) -> Result<usize, PipelineError> {
+    let conn = match conn {
+        Some(c) => c,
+        None => return Ok(0),
+    };
+
+    // Discover embedding tables
+    let tables: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT table_name FROM information_schema.tables \
+                 WHERE table_name LIKE 'embeddings_%' AND table_schema = 'main'",
+            )
+            .map_err(|e| PipelineError::DbError(e.to_string()))?;
+        stmt.query_map([], |row| row.get(0))
+            .map_err(|e| PipelineError::DbError(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let mut count = 0usize;
+    for table in &tables {
+        // Extract dims from table name: "embeddings_1536" → 1536
+        let dims: usize = table
+            .strip_prefix("embeddings_")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        let query = format!(
+            "SELECT c.content_hash FROM chunks c \
+             JOIN \"{}\" e ON c.id = e.chunk_id \
+             WHERE e.provider = ? AND e.model = ?",
+            table
+        );
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| PipelineError::DbError(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![provider, model], |row| row.get::<_, String>(0))
+            .map_err(|e| PipelineError::DbError(e.to_string()))?;
+
+        for content_hash in rows.flatten() {
+            let key = bloom_key(&content_hash, provider, model, dims);
+            bloom.insert(&key);
+            count += 1;
+        }
+    }
+
+    log::info!("Bloom filter populated from DB: {} entries", count);
+    Ok(count)
 }
 
 pub fn validate_bloom_meta(meta_path: &Path, provider: &str, model: &str) -> bool {

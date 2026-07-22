@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
@@ -46,7 +48,11 @@ pub fn extract_vectors_from_python(
 /// Unknown exceptions default to ProviderError (non-fatal).
 pub fn classify_python_embed_error(py: Python<'_>, err: &PyErr) -> PipelineError {
     let msg = err.to_string();
-    let type_name = err.get_type_bound(py).name().map(|n| n.to_string()).unwrap_or_default();
+    let type_name = err
+        .get_type_bound(py)
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_default();
 
     match type_name.as_str() {
         "AuthenticationError" => PipelineError::Auth {
@@ -82,5 +88,3 @@ pub fn classify_python_embed_error(py: Python<'_>, err: &PyErr) -> PipelineError
         },
     }
 }
-
-
