@@ -438,4 +438,196 @@ mod tests {
         assert!(debug.contains("m"));
         assert!(debug.contains("8"));
     }
+
+    // ── Contract: Bloom Pipeline Integration ──
+
+    /// RED: Second run with same content produces fewer embed callbacks than first.
+    /// GREEN: Pre-populated bloom causes pipeline to skip matching chunks.
+    ///
+    /// The stub pipeline does not persist bloom internally (that happens in PR #380),
+    /// so this test manually persists a pre-populated bloom from the bloom module and
+    /// verifies the pipeline's load_or_rebuild_bloom path reads it back.
+    #[test]
+    fn contract_bloom_prepopulation_causes_pipeline_skips() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bloom_path = temp_dir.path().join("embeddings.bloom");
+        let meta_path = temp_dir.path().join("embeddings.bloom.meta");
+
+        // Pre-populate bloom with keys for hash0 and hash2 (not hash1)
+        let mut bloom = crate::bloom::AtomicBloomFilter::with_false_pos(0.01, 10_000);
+        bloom.insert(&bloom_key("hash0", "test", "test-model", 8));
+        bloom.insert(&bloom_key("hash2", "test", "test-model", 8));
+        crate::bloom::persist_bloom(&bloom, &bloom_path).unwrap();
+        crate::bloom::persist_meta(
+            &crate::bloom::BloomMeta {
+                provider: "test".into(),
+                model: "test-model".into(),
+            },
+            &meta_path,
+        )
+        .unwrap();
+
+        let embed_fn = TestEmbedFn {
+            dims: 8,
+            fail_indices: vec![],
+        };
+        let config = PipelineConfig {
+            db_path: temp_dir.path().to_path_buf(),
+            embed_batch_callback: Box::new(embed_fn),
+            provider: "test".into(),
+            model: "test-model".into(),
+            output_dims: 8,
+            max_chunks_per_batch: 10,
+            incremental: false,
+        };
+
+        let chunks: Vec<BatchChunk> = vec![
+            make_chunk("hash0", "text 0"),
+            make_chunk("hash1", "text 1"),
+            make_chunk("hash2", "text 2"),
+        ];
+
+        let stats = IndexingPipeline::run(config, &chunks).unwrap();
+        assert_eq!(stats.chunks_processed, 3);
+        assert_eq!(
+            stats.chunks_skipped, 2,
+            "hash0 and hash2 must be skipped via bloom hit"
+        );
+        assert_eq!(
+            stats.batches_sent, 1,
+            "only hash1 should be sent for embedding"
+        );
+        assert_eq!(stats.embeddings_sent, 1);
+        assert_eq!(stats.chunks_failed, 0);
+    }
+
+    /// RED: Bloom survives pipeline close + reopen.
+    /// GREEN: Persisted bloom + meta files survive roundtrip; load_or_rebuild_bloom
+    /// recovers previously inserted keys rather than creating a fresh filter.
+    #[test]
+    fn contract_bloom_persists_across_restarts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bloom_path = temp_dir.path().join("embeddings.bloom");
+        let meta_path = temp_dir.path().join("embeddings.bloom.meta");
+
+        // First "run": create and persist bloom
+        let mut bloom = crate::bloom::AtomicBloomFilter::with_false_pos(0.01, 10_000);
+        let key = bloom_key("abc123", "openai", "text-embedding-3-small", 1536);
+        bloom.insert(&key);
+        bloom.insert(&bloom_key(
+            "xyz789",
+            "openai",
+            "text-embedding-3-small",
+            1536,
+        ));
+        crate::bloom::persist_bloom(&bloom, &bloom_path).unwrap();
+        crate::bloom::persist_meta(
+            &crate::bloom::BloomMeta {
+                provider: "openai".into(),
+                model: "text-embedding-3-small".into(),
+            },
+            &meta_path,
+        )
+        .unwrap();
+
+        // Verify bloom files exist on disk
+        assert!(
+            bloom_path.exists(),
+            "Bloom file must persist to disk at {:?}",
+            bloom_path
+        );
+        assert!(
+            meta_path.exists(),
+            "Bloom meta must persist to disk at {:?}",
+            meta_path
+        );
+
+        // Reload bloom directly — verify key recovery
+        let loaded = crate::bloom::load_bloom_from_disk(&bloom_path)
+            .unwrap()
+            .expect("must load persisted bloom");
+        assert!(
+            loaded.contains(&key),
+            "loaded bloom must contain previously-inserted keys"
+        );
+        assert!(loaded.contains("abc123:openai:text-embedding-3-small:1536"));
+
+        // load_or_rebuild_bloom must use persisted bloom (not rebuild from empty)
+        let reloaded =
+            load_or_rebuild_bloom(temp_dir.path(), "openai", "text-embedding-3-small").unwrap();
+        assert!(
+            reloaded.contains(&key),
+            "load_or_rebuild_bloom must recover persisted keys"
+        );
+    }
+
+    /// RED: Callback never receives a batch exceeding the configured max size.
+    /// GREEN: BatchBuilder token budget flushes batches before budget is exceeded.
+    #[test]
+    fn contract_token_budget_limits_batch_size() {
+        // Each chunk = 15 chars → 5 tokens (15 / 3). Budget = 10 tokens.
+        // So at most 2 chunks per batch before flushing.
+        let config = crate::embed::token::BatchConfig {
+            max_chunks_per_batch: 100,
+            max_tokens_per_chunk: 10_000,
+            batch_token_budget: Some(10),
+        };
+        let mut builder = crate::embed::token::BatchBuilder::new(config);
+
+        // 5 tokens → ok, no flush
+        assert!(builder.push(make_chunk("c1", "123456789012345")).is_none());
+        // 10 tokens → ok, no flush (at budget)
+        assert!(builder.push(make_chunk("c2", "123456789012345")).is_none());
+        // 15 tokens would exceed 10 → flush old batch, start new with c3
+        let flushed = builder.push(make_chunk("c3", "123456789012345"));
+        assert!(flushed.is_some(), "must flush before exceeding budget");
+        assert_eq!(
+            flushed.unwrap().len(),
+            2,
+            "flushed batch must contain 2 chunks"
+        );
+
+        // Builder now has only c3 (5 tokens)
+        // Push c4 → 10 tokens, no flush
+        assert!(builder.push(make_chunk("c4", "123456789012345")).is_none());
+
+        // Final flush — remaining 2 chunks
+        let remaining = builder.flush();
+        assert!(remaining.is_some());
+        assert_eq!(remaining.unwrap().len(), 2);
+    }
+
+    /// RED: Rust pipeline produces deterministic, predictable output for known input.
+    /// GREEN: Pipeline stats match expected values for a fixed chunk set.
+    #[test]
+    fn contract_output_stats_match_expected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let embed_fn = TestEmbedFn {
+            dims: 8,
+            fail_indices: vec![],
+        };
+        let config = PipelineConfig {
+            db_path: temp_dir.path().to_path_buf(),
+            embed_batch_callback: Box::new(embed_fn),
+            provider: "test".into(),
+            model: "test-model".into(),
+            output_dims: 8,
+            max_chunks_per_batch: 2,
+            incremental: false,
+        };
+
+        // 5 chunks, batch capacity = 2 → ceil(5/2) = 3 batches
+        let chunks: Vec<BatchChunk> = (0..5)
+            .map(|i| make_chunk(&format!("hash{}", i), &format!("text {}", i)))
+            .collect();
+
+        let stats = IndexingPipeline::run(config, &chunks).unwrap();
+
+        // All chunks processed, no bloom (empty), no failures
+        assert_eq!(stats.chunks_processed, 5);
+        assert_eq!(stats.chunks_skipped, 0);
+        assert_eq!(stats.batches_sent, 3, "ceil(5 / 2) = 3 batches");
+        assert_eq!(stats.embeddings_sent, 5, "all 5 embedded");
+        assert_eq!(stats.chunks_failed, 0);
+    }
 }
