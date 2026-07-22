@@ -1,4 +1,5 @@
 pub mod callback;
+pub mod retry;
 pub mod token;
 
 use crate::embed::callback::extract_vectors_from_python;

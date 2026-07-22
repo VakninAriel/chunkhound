@@ -1,7 +1,7 @@
 # Embedding Provider Integration — Revised Design (Thin-Rust)
 
-**Date:** 2026-07-21 · **Revision:** 4 (PR #380 post-mortem)
-**Scope:** Refine the embed stage design to match PR #380's thin-Rust architecture, adding bloom filter dedup, token-aware batch sizing, formalized callback interface, and unified error taxonomy.
+**Date:** 2026-07-21 · **Revision:** 5 (Added §12 — Rust-native embedding providers)
+**Scope:** Refine the embed stage design to match PR #380's thin-Rust architecture, adding bloom filter dedup, token-aware batch sizing, formalized callback interface, unified error taxonomy, **and Rust-native embedding providers (§12)**.
 **Depends on:** PR #380 (Main Rust Flow) merged — pipeline orchestration, DB writer, parallel parse/embed, incremental reindex, progress, compaction.
 **Supersedes:** [2026-07-19-embedding-provider-integration-design.md](./2026-07-19-embedding-provider-integration-design.md) (heavy-Rust approach — rejected in favor of thin-Rust)
 
@@ -68,8 +68,13 @@ The callback pattern is the key architectural insight: **Rust owns data flow, Py
 | Unified `PipelineError` | Medium | ~60 | Existing `src/error.rs` |
 | Bloom sidecar `.meta` JSON | Low | ~40 | Bloom filter |
 | Integration wiring in pipeline.rs | High | ~60 | All of the above |
+| **Rust-native provider: OpenAI** | **High** | **~250** | **EmbedBatchFn trait** |
+| **Rust-native provider: VoyageAI** | **Medium** | **~200** | **OpenAI provider pattern** |
+| **Rust-native provider: Ollama** | **Low** | **~100** | **Generic pattern** |
+| **Provider factory + retry logic** | **Medium** | **~80** | **All providers** |
 
-**Total: ~710 lines of Rust. Zero Python changes needed** (callback is already wired).
+**Total (Phase 1 — bloom + token + callback): ~710 lines of Rust. Zero Python changes needed** (callback is already wired).  
+**Total (Phase 2 — Rust-native providers): ~630 additional lines.**
 
 ---
 
@@ -85,6 +90,7 @@ The callback pattern is the key architectural insight: **Rust owns data flow, Py
 | Error taxonomy | **Unified `PipelineError`** with fatal vs non-fatal | Ad-hoc `PyErr` catching replaced with typed errors |
 | Provider config | **Passed from Python** in `PipelineConfig` | Rust maintains zero provider config tables — Python owns models |
 | Bloom key | `(content_hash, provider, model, output_dims)` | Content-based dedup across chunk_id changes |
+| Rust-native providers | **OpenAI + VoyageAI via `reqwest`** implementing `EmbedBatchFn`; Python fallback for custom providers | Eliminates GIL per batch, connection pooling, zero-copy |
 
 ---
 
@@ -1144,6 +1150,12 @@ pub enum PipelineError {
     #[error("rate limited by {provider}")]
     RateLimited { provider: String, retry_after_secs: Option<u64> },
 
+    #[error("context length exceeded: {0}")]
+    ContextLengthExceeded(String),
+
+    #[error("unexpected response format: {0}")]
+    ResponseFormat(String),
+
     // ── Infrastructure ──
     #[error("database error: {0}")]
     DbError(String),
@@ -1157,7 +1169,8 @@ impl PipelineError {
         matches!(self,
             Self::Auth { .. } |
             Self::BadRequest { .. } |
-            Self::Cancelled
+            Self::Cancelled |
+            Self::ResponseFormat(_)
         )
     }
 }
@@ -1374,13 +1387,15 @@ mod classify_tests {
             PipelineError::Cancelled,
             PipelineError::ProviderError { provider: "".into(), message: "".into() },
             PipelineError::RateLimited { provider: "".into(), retry_after_secs: None },
+            PipelineError::ContextLengthExceeded("".into()),
+            PipelineError::ResponseFormat("".into()),
             PipelineError::DbError("".into()),
             PipelineError::IoError { path: PathBuf::new(), message: "".into() },
         ];
         // Every variant is represented once — adding a variant here without
         // updating is_fatal() would need manual review, but this array at least
         // fails to compile if you rename a variant without updating this test.
-        assert_eq!(errors.len(), 7, "all 7 PipelineError variants must be listed");
+        assert_eq!(errors.len(), 9, "all 9 PipelineError variants must be listed");
     }
 }
 ```
@@ -1419,9 +1434,15 @@ src/
 ├── bloom.rs                # NEW: AtomicBloomFilter, load_or_rebuild_bloom(), bloom_key()
 │
 └── embed/                  # NEW directory
-    ├── mod.rs              # EmbedBatchFn trait, PythonEmbedCallback
+    ├── mod.rs              # EmbedBatchFn trait, PythonEmbedCallback, provider factory
     ├── token.rs            # BatchBuilder, estimate_tokens(), BatchConfig
-    └── callback.rs         # classify_python_embed_error(), extract_vectors_from_python()
+    ├── callback.rs         # classify_python_embed_error(), extract_vectors_from_python()
+    └── providers/          # NEW: Rust-native provider implementations (§12)
+        ├── mod.rs          # create_embed_fn() factory, common retry logic
+        ├── openai.rs       # OpenAiEmbedFn
+        ├── voyageai.rs     # VoyageAiEmbedFn
+        ├── ollama.rs       # OllamaEmbedFn
+        └── generic.rs      # GenericEmbedFn (any OAI-compatible endpoint)
 ```
 
 ### 9.1 What Changes in Existing Files
@@ -1552,16 +1573,581 @@ uv run pytest tests/test_smoke.py -v -n auto
 
 ---
 
-## 12. Future Work
+## 12. Rust-Native Embedding Providers
+
+**Status:** Planned — design complete, implementation pending  
+**Rationale:** Python callback adds GIL-acquisition overhead per batch (~0.5–2ms), cross-language marshalling, and prevents Rust from owning the full pipeline flow. Rust-native providers eliminate this with `reqwest` HTTP, connection pooling, and zero-copy batch dispatch. The `EmbedBatchFn` trait (§7) already supports both — providers are simply new implementations.
+
+### 12.1 Architecture
+
+```
+Pipeline dispatch
+  └─ embed_fn: Box<dyn EmbedBatchFn>
+       ├─ OpenAiProvider     (reqwest → api.openai.com)
+       ├─ VoyageAiProvider   (reqwest → api.voyageai.com)
+       └─ PythonEmbedCallback (fallback for custom providers)
+```
+
+The factory (`create_embed_fn()`) selects:
+1. `"openai"` + known model → `OpenAiProvider` (Rust-native)
+2. `"voyageai"` + known model → `VoyageAiProvider` (Rust-native)
+3. Everything else → `PythonEmbedCallback` (fallback)
+
+### 12.2 Config Flow (Runtime, not Compile-Time)
+
+Config flows from user files through Python Pydantic into Rust — no static tables anywhere:
+
+```
+User's chunkhound.toml / env vars
+  └─ Python Pydantic EmbeddingConfig
+       ├─ Validates: provider, model, api_key, base_url, output_dims, timeout...
+       ├─ Resolves defaults: max_tokens, native_dims, matryoshka, max_batch_size
+       │    └─ Known models: resolves from Python's OPENAI_MODEL_CONFIG / VOYAGE_MODEL_CONFIG
+       │    └─ Custom models: user must set output_dims explicitly
+       └─ Passes fully-resolved EmbedConfig dict to Rust via PyO3
+
+Rust receives EmbedConfig:
+  pub struct EmbedConfig {
+      pub provider:        String,      // "openai" | "voyageai"
+      pub api_key:         String,
+      pub model:           String,      // "text-embedding-3-small"
+      pub base_url:        Option<String>,
+      pub output_dims:     Option<usize>,  // matryoshka dims
+      pub native_dims:     Option<usize>,  // resolved by Python, None = discover at runtime
+      pub max_tokens:      usize,          // resolved by Python
+      pub matryoshka:      bool,           // resolved by Python
+      pub max_batch_size:  usize,          // resolved by Python
+      pub timeout_seconds: u64,
+      pub retry_attempts:  u32,
+      pub ssl_verify:      bool,
+      pub api_version:     Option<String>, // Azure
+      pub azure_endpoint:  Option<String>, // Azure
+  }
+```
+
+**No static model tables in Rust.** Rust doesn't know which models exist. It builds the HTTP request with whatever values it received. A user with a custom endpoint sets `base_url` and `output_dims` in their config file — it works without any Rust changes.
+
+### 12.3 Retry Policy
+
+Full Rust-native retry logic shared by all providers:
+
+```rust
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    pub max_attempts: u32,       // default: 3
+    pub base_delay:   Duration,  // default: 1 second
+    pub max_delay:    Duration,  // default: 60 seconds
+    pub jitter:       bool,      // default: true
+}
+
+fn embed_with_retry(
+    provider: &dyn EmbedBatchFn,
+    texts: &[String],
+    policy: &RetryPolicy,
+    cancelled: &AtomicBool,
+) -> Result<Vec<Vec<f32>>, PipelineError> {
+    let mut attempt: u32 = 0;
+    let mut delay = policy.base_delay;
+
+    loop {
+        if cancelled.load(Ordering::Relaxed) { return Err(PipelineError::Cancelled); }
+        attempt += 1;
+
+        match provider.embed_batch_raw(texts) {
+            // embed_batch_raw is the HTTP call, distinct from EmbedBatchFn::embed_batch
+            // which wraps retry logic + error classification
+            Ok(vectors) => return Ok(vectors),
+            Err(e) => {
+                if matches!(&e, PipelineError::ContextLengthExceeded(_)) {
+                    return Err(e);  // propagate for batch splitting
+                }
+                if !is_retryable(&e) || attempt >= policy.max_attempts {
+                    return Err(e);
+                }
+                let wait = if let PipelineError::RateLimited { retry_after_secs: Some(ra) } = &e {
+                    Duration::from_secs(*ra)
+                } else {
+                    delay
+                };
+                sleep_with_jitter(wait, policy.jitter);
+                if !matches!(&e, PipelineError::RateLimited { .. }) {
+                    delay = (delay * 2).min(policy.max_delay);
+                }
+            }
+        }
+    }
+}
+
+fn is_retryable(e: &PipelineError) -> bool {
+    matches!(e,
+        PipelineError::ProviderError { .. }
+        | PipelineError::RateLimited { .. }
+        | PipelineError::ContextLengthExceeded(_)
+    )
+}
+```
+
+Key behaviors:
+- **429 RateLimited:** Uses `Retry-After` header value, does NOT compound
+- **5xx ProviderError:** Exponential backoff: 1s → 2s → 4s... capped at 60s
+- **ContextLengthExceeded:** Propagates for batch splitting (halve the batch, retry each half)
+- **Auth/BadRequest:** Not retryable → immediate return
+- **Cancellation:** Checked before each attempt
+
+### 12.4 HTTP Status → PipelineError Mapping
+
+Shared classifier used by all Rust-native providers:
+
+```rust
+fn classify_http_response(response: &reqwest::blocking::Response) -> Result<(), PipelineError> {
+    match response.status().as_u16() {
+        200..=299 => Ok(()),
+        401 | 403 => Err(PipelineError::Auth {
+            provider: "unknown".into(),
+            message: response.text().unwrap_or_default(),
+        }),
+        429 => {
+            let retry_after = response.headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            Err(PipelineError::RateLimited {
+                provider: "unknown".into(),
+                retry_after_secs: retry_after,
+            })
+        }
+        400..=499 => {
+            let body = response.text().unwrap_or_default();
+            if body.contains("context length") || body.contains("maximum context length") {
+                Err(PipelineError::ContextLengthExceeded(body))
+            } else {
+                Err(PipelineError::BadRequest { provider: "unknown".into(), message: body })
+            }
+        }
+        500..=599 => Err(PipelineError::ProviderError {
+            provider: "unknown".into(),
+            message: response.text().unwrap_or_default(),
+        }),
+        _ => Err(PipelineError::ProviderError {
+            provider: "unknown".into(),
+            message: format!("HTTP {}", response.status()),
+        }),
+    }
+}
+```
+
+> Adds `ContextLengthExceeded(String)` variant to `PipelineError` — retryable, triggers batch splitting.
+
+### 12.5 OpenAiProvider
+
+```rust
+use reqwest::blocking::Client;
+
+pub struct OpenAiProvider {
+    client:       Client,
+    api_key:      String,
+    model:        String,
+    base_url:     String,
+    output_dims:  Option<usize>,
+    matryoshka:   bool,
+    is_azure:     bool,
+    api_version:  Option<String>,
+}
+
+impl OpenAiProvider {
+    pub fn new(cfg: &EmbedConfig) -> Result<Self, PipelineError> {
+        let is_azure = cfg.azure_endpoint.is_some() ||
+            cfg.base_url.as_deref().map_or(false, |u| u.contains("openai.azure.com"));
+        let base_url = if is_azure {
+            cfg.azure_endpoint.clone().unwrap_or_else(|| cfg.base_url.clone().unwrap())
+        } else {
+            cfg.base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".into())
+        };
+
+        let mut client_builder = Client::builder()
+            .timeout(Duration::from_secs(cfg.timeout_seconds));
+        if !cfg.ssl_verify {
+            client_builder = client_builder.danger_accept_invalid_certs(true);
+        }
+
+        Ok(Self {
+            client:      client_builder.build().map_err(|e| PipelineError::ProviderError {
+                provider: "openai".into(), message: e.to_string(),
+            })?,
+            api_key:     cfg.api_key.clone(),
+            model:       cfg.model.clone(),
+            base_url,
+            output_dims: cfg.output_dims,
+            matryoshka:  cfg.matryoshka,
+            is_azure,
+            api_version: cfg.api_version.clone(),
+        })
+    }
+
+    fn build_request(&self, texts: &[String]) -> Result<Request, PipelineError> {
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "input": texts,
+        });
+        // Send dimensions only for server-side matryoshka truncation
+        if let Some(dims) = self.output_dims {
+            if self.matryoshka {
+                body["dimensions"] = serde_json::json!(dims);
+            }
+        }
+
+        let mut url = format!("{}/embeddings", self.base_url);
+        if self.is_azure {
+            if let Some(ref ver) = self.api_version {
+                url.push_str(&format!("?api-version={}", ver));
+            }
+        }
+
+        let mut req = self.client.post(&url).json(&body);
+        if self.is_azure {
+            req = req.header("api-key", &self.api_key);
+        } else {
+            req = req.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        Ok(req)
+    }
+
+    fn embed_batch_raw(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, PipelineError> {
+        let response = self.build_request(texts)?.send()
+            .map_err(|e| PipelineError::ProviderError {
+                provider: "openai".into(), message: e.to_string(),
+            })?;
+
+        classify_http_response(&response)?;
+
+        let raw: OpenAIResponse = response.json()
+            .map_err(|e| PipelineError::ResponseFormat(format!("openai: {}", e)))?;
+
+        let mut data = raw.data;
+        data.sort_by_key(|d| d.index);
+        let vectors: Vec<Vec<f32>> = data.into_iter().map(|d| d.embedding).collect();
+
+        // Client-side truncation: slice + L2-normalize
+        if let Some(out) = self.output_dims {
+            if !self.matryoshka {
+                return Ok(vectors.into_iter().map(|v| l2_normalize(&v[..out])).collect());
+            }
+        }
+        Ok(vectors)
+    }
+}
+
+impl EmbedBatchFn for OpenAiProvider {
+    fn embed_batch(&self, texts: &[String], _provider: &str, _model: &str, _dims: usize) -> EmbedBatchResult {
+        match self.embed_batch_raw(texts) {
+            Ok(vectors) => EmbedBatchResult {
+                vectors: vectors.into_iter().map(Some).collect(),
+                stats: BatchCallStats { api_calls: 1, total_latency_ms: 0 },
+            },
+            Err(e) if e.is_fatal() => {
+                // Fatal — pipeline aborts. Partial failure is handled by retry wrapper.
+                EmbedBatchResult {
+                    vectors: vec![None; texts.len()],
+                    stats: BatchCallStats { api_calls: 1, total_latency_ms: 0 },
+                }
+            }
+            Err(_) => {
+                // Non-fatal — retryable, handled by embed_with_retry wrapper
+                EmbedBatchResult {
+                    vectors: vec![None; texts.len()],
+                    stats: BatchCallStats { api_calls: 1, total_latency_ms: 0 },
+                }
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct OpenAIResponse { data: Vec<OpenAIEmbeddingData> }
+
+#[derive(Deserialize)]
+struct OpenAIEmbeddingData { embedding: Vec<f32>, index: usize }
+```
+
+### 12.6 VoyageAiProvider
+
+```rust
+pub struct VoyageAiProvider {
+    client:      Client,
+    api_key:     String,
+    model:       String,
+    base_url:    String,
+    output_dims: Option<usize>,
+}
+
+impl VoyageAiProvider {
+    pub fn new(cfg: &EmbedConfig) -> Result<Self, PipelineError> {
+        let base_url = cfg.base_url.clone()
+            .unwrap_or_else(|| "https://api.voyageai.com/v1".into());
+
+        let mut client_builder = Client::builder()
+            .timeout(Duration::from_secs(cfg.timeout_seconds));
+        if !cfg.ssl_verify {
+            client_builder = client_builder.danger_accept_invalid_certs(true);
+        }
+
+        Ok(Self {
+            client:      client_builder.build().map_err(|e| PipelineError::ProviderError {
+                provider: "voyageai".into(), message: e.to_string(),
+            })?,
+            api_key:     cfg.api_key.clone(),
+            model:       cfg.model.clone(),
+            base_url,
+            output_dims: cfg.output_dims,
+        })
+    }
+
+    fn embed_batch_raw(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, PipelineError> {
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "input": texts,
+            "input_type": "document",
+            "truncation": true,
+        });
+        if let Some(dims) = self.output_dims {
+            body["output_dimension"] = serde_json::json!(dims);
+        }
+
+        let response = self.client
+            .post(format!("{}/embeddings", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .map_err(|e| PipelineError::ProviderError {
+                provider: "voyageai".into(), message: e.to_string(),
+            })?;
+
+        classify_http_response(&response)?;
+
+        let raw: VoyageResponse = response.json()
+            .map_err(|e| PipelineError::ResponseFormat(format!("voyageai: {}", e)))?;
+
+        let mut data = raw.data;
+        data.sort_by_key(|d| d.index);
+        Ok(data.into_iter().map(|d| d.embedding).collect())
+    }
+}
+
+impl EmbedBatchFn for VoyageAiProvider {
+    fn embed_batch(&self, texts: &[String], _provider: &str, _model: &str, _dims: usize) -> EmbedBatchResult {
+        match self.embed_batch_raw(texts) {
+            Ok(vectors) => EmbedBatchResult {
+                vectors: vectors.into_iter().map(Some).collect(),
+                stats: BatchCallStats { api_calls: 1, total_latency_ms: 0 },
+            },
+            Err(e) => EmbedBatchResult {
+                vectors: vec![None; texts.len()],
+                stats: BatchCallStats { api_calls: 1, total_latency_ms: 0 },
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct VoyageResponse { data: Vec<VoyageEmbeddingData> }
+
+#[derive(Deserialize)]
+struct VoyageEmbeddingData { embedding: Vec<f32>, index: usize }
+```
+
+### 12.7 Provider Factory
+
+```rust
+/// Create an EmbedBatchFn implementation for the given config.
+/// Returns Python fallback for providers not yet implemented natively.
+pub fn create_embed_fn(
+    cfg: &EmbedConfig,
+    py_callback: Option<Py<PyAny>>,  // fallback Python callable
+) -> Box<dyn EmbedBatchFn> {
+    match cfg.provider.as_str() {
+        "openai" | "azure_openai" => {
+            match OpenAiProvider::new(cfg) {
+                Ok(p) => return Box::new(p),
+                Err(e) => log::warn!("Failed to create OpenAiProvider: {} — falling back to Python", e),
+            }
+        }
+        "voyageai" => {
+            match VoyageAiProvider::new(cfg) {
+                Ok(p) => return Box::new(p),
+                Err(e) => log::warn!("Failed to create VoyageAiProvider: {} — falling back to Python", e),
+            }
+        }
+        _ => {}
+    }
+    // Fallback: Python callback for unsupported or failed providers
+    if let Some(cb) = py_callback {
+        Box::new(PythonEmbedCallback::new(cb))
+    } else {
+        // No callback available — will fail at first embed_batch call
+        // This path is for providers that shouldn't need a callback
+        panic!("No embed function available for provider: {}", cfg.provider)
+    }
+}
+```
+
+### 12.8 Retry Wrapper Integration
+
+The pipeline dispatch loop wraps the provider in retry logic:
+
+```rust
+fn dispatch_batch_with_retry(
+    chunks: &[BatchChunk],
+    provider: &dyn EmbedBatchFn,   // OpenAiProvider or VoyageAiProvider
+    retry: &RetryPolicy,
+    cancelled: &AtomicBool,
+    provider_name: &str,
+    model: &str,
+    dims: usize,
+) -> EmbedBatchResult {
+    let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+
+    match embed_with_retry(provider, &texts, retry, cancelled) {
+        Ok(vectors) => EmbedBatchResult {
+            vectors: vectors.into_iter().map(Some).collect(),
+            stats: BatchCallStats { api_calls: 1, total_latency_ms: 0 },
+        },
+        Err(PipelineError::ContextLengthExceeded(_)) if texts.len() > 1 => {
+            // Split batch in half, retry each
+            let mid = texts.len() / 2;
+            let mut left = dispatch_batch_with_retry(
+                &chunks[..mid], provider, retry, cancelled, provider_name, model, dims,
+            );
+            let right = dispatch_batch_with_retry(
+                &chunks[mid..], provider, retry, cancelled, provider_name, model, dims,
+            );
+            left.vectors.extend(right.vectors);
+            left.stats.api_calls += right.stats.api_calls;
+            left
+        }
+        Err(e) => {
+            log::warn!("Embed batch failed after {} attempts: {}", retry.max_attempts, e);
+            EmbedBatchResult {
+                vectors: vec![None; texts.len()],
+                stats: BatchCallStats { api_calls: retry.max_attempts, total_latency_ms: 0 },
+            }
+        }
+    }
+}
+```
+
+### 12.9 Module Layout (Additions)
+
+```
+src/embed/
+├── mod.rs              # EmbedBatchFn trait (existing)
+├── token.rs            # BatchBuilder (existing)
+├── callback.rs         # PythonEmbedCallback (existing)
+├── retry.rs            # NEW: RetryPolicy, embed_with_retry(), classify_http_response()
+├── openai.rs           # NEW: OpenAiProvider
+├── voyageai.rs         # NEW: VoyageAiProvider
+└── factory.rs          # NEW: create_embed_fn()
+```
+
+### 12.10 Dependencies
+
+```toml
+[dependencies]
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
+# serde, serde_json already present
+```
+
+### 12.11 TDD: Rust-Native Provider Tests
+
+Write RED before implementing GREEN. All tests use `httpmock` to avoid real API calls.
+
+```toml
+[dev-dependencies]
+httpmock = "0.7"
+```
+
+#### Phase 1: Retry + HTTP Classification (retry.rs)
+
+| # | Test | What it verifies |
+|---|---|---|
+| 1 | `classify_200_is_ok` | Success path |
+| 2 | `classify_401_is_auth_error` | Auth → PipelineError::Auth |
+| 3 | `classify_429_is_rate_limited_with_retry_after` | Rate limit with header parsing |
+| 4 | `classify_429_no_header_is_rate_limited_none` | Rate limit without header |
+| 5 | `classify_400_context_length_is_context_length_exceeded` | Context length detection in body |
+| 6 | `classify_400_other_is_bad_request` | Other 4xx → BadRequest |
+| 7 | `classify_500_is_provider_error` | Server error → ProviderError |
+| 8 | `retry_succeeds_on_first_attempt` | Happy path |
+| 9 | `retry_succeeds_after_rate_limit` | 429 → wait → retry → success |
+| 10 | `retry_exhausts_attempts_on_5xx` | 3 attempts → exhausted → error |
+| 11 | `retry_stops_on_cancellation` | AtomicBool check |
+| 12 | `retry_propagates_context_length` | ContextLengthExceeded not retried |
+| 13 | `retry_does_not_compound_on_429` | RateLimited uses Retry-After, not exponential |
+
+#### Phase 2: OpenAiProvider (openai.rs)
+
+| # | Test | What it verifies |
+|---|---|---|
+| 14 | `openai_embed_batch_returns_correct_count` | 3 texts → 3 vectors |
+| 15 | `openai_embed_batch_returns_correct_dims` | 1536-dim vectors |
+| 16 | `openai_sends_dimensions_param_for_matryoshka` | `dimensions` in JSON body |
+| 17 | `openai_skips_dimensions_for_non_matryoshka` | ada-002: no `dimensions` param |
+| 18 | `openai_sorts_by_index` | Response with shuffled indices → correct order |
+| 19 | `openai_azure_uses_api_key_header` | `api-key` header instead of `Authorization` |
+| 20 | `openai_azure_appends_api_version` | `?api-version=...` in URL |
+| 21 | `openai_client_truncation_slices_and_normalizes` | slice + L2-normalize |
+
+#### Phase 3: VoyageAiProvider (voyageai.rs)
+
+| # | Test | What it verifies |
+|---|---|---|
+| 22 | `voyageai_embed_batch_returns_correct_count` | 3 texts → 3 vectors |
+| 23 | `voyageai_embed_batch_returns_correct_dims` | 1024-dim vectors |
+| 24 | `voyageai_sends_output_dimension_param` | `output_dimension` in JSON body |
+| 25 | `voyageai_always_sends_truncation_true` | `truncation: true` in body |
+| 26 | `voyageai_always_sends_input_type_document` | `input_type: "document"` in body |
+| 27 | `voyageai_sorts_by_index` | Response ordering |
+
+#### Phase 4: Factory (factory.rs)
+
+| # | Test | What it verifies |
+|---|---|---|
+| 28 | `factory_returns_openai_for_openai_provider` | Routing |
+| 29 | `factory_returns_voyageai_for_voyageai_provider` | Routing |
+| 30 | `factory_falls_back_to_python_for_unknown` | Fallback path |
+
+#### Phase 5: Parity (contract test)
+
+| # | Test | What it verifies |
+|---|---|---|
+| 31 | `rust_openai_matches_python_openai_output` | Same inputs → same vectors |
+| 32 | `rust_voyageai_matches_python_voyageai_output` | Same inputs → same vectors |
+
+**Total: 32 new TDD tests across 5 phases.**
+
+### 12.12 Migration Path
+
+| Phase | Action | Trigger |
+|---|---|---|
+| 1 | Implement OpenAiProvider + VoyageAiProvider | This design |
+| 2 | Run TDD tests (32 tests) → all GREEN | Gate |
+| 3 | Add `use_rust_providers: bool` config flag (default: false) | Opt-in |
+| 4 | Benchmark Rust vs Python callback (latency, throughput, memory) | Data-driven |
+| 5 | Switch default to `use_rust_providers: true` | After benchmark confirms parity |
+| 6 | Remove PythonEmbedCallback path (keep as fallback for custom providers) | Cleanup |
+
+---
+
+## 13. Future Work
 
 | Item | When | Notes |
 |---|---|---|
-| Rust-native OpenAI/VoyageAI providers | If callback overhead becomes bottleneck | Implement `EmbedBatchFn` in Rust using `reqwest`; no trait changes needed |
+| **Rust-native OpenAI/VoyageAI providers** | **Next design iteration** | **Planned — see §12** |
 | Qwen/Ollama/Cohere native providers | When user demand justifies | Same trait, just add struct + factory |
 | Bloom overflow auto-rebuild with 2× capacity | When load factor tracking added to fastbloom | |
 | tiktoken integration for precise token counting | If char-based estimation produces too many false skips | Deferred — empirically chars/3 is sufficient |
 | Rerank support in Rust | Separate from embed stage; search-path concern | |
 | Provider health check in Rust | If CLI health-check needs Rust path | Currently Python path handles this |
+| Async EmbedBatchFn (tokio) | If blocking reqwest becomes bottleneck | Requires trait redesign for `async fn` |
 
 ---
 
@@ -1588,12 +2174,12 @@ New log messages:
 
 | Aspect | July 19 Design | This Design (July 21) |
 |---|---|---|
-| Embedding approach | Rust-native `EmbeddingProvider` trait + `reqwest` | Python callback via `EmbedBatchFn` trait |
-| HTTP client | Rust `reqwest::blocking::Client` | Python async providers (OpenAI SDK, VoyageAI SDK) |
-| Concurrency | Crossbeam worker pool (coordinator + N workers) | Rayon thread pool calling Python callbacks |
-| Provider implementations | Rust `OpenAiProvider`, `VoyageAiProvider` (~600 lines each) | Delegated to Python (0 Rust provider lines) |
+| Embedding approach | Rust-native `EmbeddingProvider` trait + `reqwest` | **Hybrid: Python callback (immediate) → Rust-native providers (§12)** |
+| HTTP client | Rust `reqwest::blocking::Client` | **Phase 1:** Python async providers; **Phase 2:** Rust `reqwest` |
+| Concurrency | Crossbeam worker pool (coordinator + N workers) | **Phase 1:** Rayon + Python callbacks; **Phase 2:** Rayon + Rust-native |
+| Provider implementations | Rust `OpenAiProvider`, `VoyageAiProvider` (~600 lines each) | **Phase 1:** Delegated to Python (0 Rust provider lines); **Phase 2:** Rust-native providers |
 | Provider config | Static `phf` tables in Rust | Passed from Python in `PipelineConfig` |
-| Retry logic | Rust `RetryPolicy` + `embed_with_retry()` | Python providers handle retries |
+| Retry logic | Rust `RetryPolicy` + `embed_with_retry()` | **Phase 1:** Python providers handle retries; **Phase 2:** Rust-native retry |
 | Dimension discovery | Rust `AtomicUsize` for runtime dims | Python providers handle dimension discovery |
 | Pipeline topology | Parse → Embed stage (coordinator thread) → DB Writer | Parse → Embed → Write in single `run()` loop |
 | Progress | Crossbeam progress channel | `progress_callback` → Rich bars |
@@ -1614,3 +2200,4 @@ New log messages:
 | Token estimation in Rust | ❌ In Python callback | ✅ Moves to Rust pre-dispatch |
 | EmbedBatchFn trait | ❌ Ad-hoc PyAny callable | ✅ Formalized trait |
 | Unified error taxonomy | ❌ Ad-hoc PyErr handling | ✅ PipelineError enum |
+| Rust-native providers | ❌ Python callback only | ✅ Planned: OpenAI + VoyageAI (§12) |

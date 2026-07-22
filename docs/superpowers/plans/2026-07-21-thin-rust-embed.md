@@ -2094,6 +2094,180 @@ uv run python scripts/bench_embed_parity.py --files 20 --chunks-per-file 15 --ru
 | 11 | pipeline wiring | 0* | ~120 | Tasks 4,7,9,10 |
 | 12 | contract tests | 4 | ~120 | Task 11 |
 | 13 | benchmark | — | ~120 | Task 12 |
-| **Total** | | **58** | **~920** | |
+| **Phase 1 Total** | | **58** | **~920** | |
 
-*Python-dependent tests counted under contract tests (Task 12) and benchmark (Task 13).
+### Phase 2: Rust-Native Embedding Providers
+
+| Task | Module | Tests | New Lines | Dependencies |
+|---|---|---|---|---|
+| 14 | `error.rs` (ContextLengthExceeded + ResponseFormat) | 4 | ~30 | Task 1 |
+| 15 | `embed/retry.rs` (classify_http + RetryPolicy) | 13 | ~180 | Task 14 |
+| 16 | `embed/openai.rs` (OpenAiProvider) | 8 | ~220 | Tasks 15 |
+| 17 | `embed/voyageai.rs` (VoyageAiProvider) | 5 | ~180 | Task 15 |
+| 18 | `embed/factory.rs` (create_embed_fn) | 3 | ~60 | Tasks 16, 17 |
+| 19 | Integration: wire factory into pipeline | 0* | ~40 | Task 18 |
+| 20 | Parity: Rust-vs-Python contract tests | 2 | ~120 | Task 19 |
+| **Phase 2 Total** | | **35** | **~830** | |
+| **Grand Total** | | **93** | **~1,750** | |
+
+*Phase 2 integration tests counted under parity (Task 20).
+
+---
+
+### Task 14: PipelineError — ContextLengthExceeded + ResponseFormat
+
+**Files:**
+- Modify: `src/error.rs`
+
+**Interfaces:**
+- Adds: `PipelineError::ContextLengthExceeded(String)` — retryable (not in is_fatal())
+- Adds: `PipelineError::ResponseFormat(String)` — fatal (add to is_fatal())
+- Updates: exhaustive variant test from 7 → 9
+
+- [ ] **Step 1: Write RED tests**
+
+Add to the test module in `src/error.rs`:
+
+```rust
+#[test]
+fn context_length_exceeded_is_not_fatal() {
+    let err = PipelineError::ContextLengthExceeded("max tokens exceeded".into());
+    assert!(!err.is_fatal(), "ContextLengthExceeded is retryable — not fatal");
+}
+
+#[test]
+fn response_format_is_fatal() {
+    let err = PipelineError::ResponseFormat("invalid json".into());
+    assert!(err.is_fatal(), "ResponseFormat is fatal — cannot recover");
+}
+
+#[test]
+fn context_length_exceeded_display_includes_message() {
+    let err = PipelineError::ContextLengthExceeded("max tokens exceeded".into());
+    assert!(err.to_string().contains("max tokens exceeded"));
+}
+
+#[test]
+fn response_format_display_includes_message() {
+    let err = PipelineError::ResponseFormat("invalid json".into());
+    assert!(err.to_string().contains("invalid json"));
+}
+```
+
+Update the exhaustive variant array to include the two new variants and change `assert_eq!(errors.len(), 7, ...)` to `assert_eq!(errors.len(), 9, ...)`.
+
+- [ ] **Step 2: RED** — `cargo test error::tests` → new tests fail
+- [ ] **Step 3: GREEN** — Add variants + update is_fatal() + update exhaustive test
+- [ ] **Step 4:** Lint + fmt
+- [ ] **Step 5:** Commit: `feat(error): add ContextLengthExceeded + ResponseFormat variants`
+
+---
+
+### Task 15: Retry Policy + HTTP Classification
+
+**Files:**
+- Create: `src/embed/retry.rs`
+- Modify: `src/embed/mod.rs` (add `pub mod retry;`)
+- Modify: `Cargo.toml` (add `reqwest`, `httpmock`)
+
+**Interfaces:**
+- Produces: `RetryPolicy { max_attempts, base_delay, max_delay, jitter }`
+- Produces: `fn embed_with_retry(provider, texts, policy, cancelled) -> Result<Vec<Vec<f32>>, PipelineError>`
+- Produces: `fn classify_http_response(response: &reqwest::blocking::Response) -> Result<(), PipelineError>`
+- Produces: `fn is_retryable(e: &PipelineError) -> bool`
+- Produces: `fn sleep_with_jitter(duration, jitter)`
+
+Add to Cargo.toml:
+```toml
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
+httpmock = "0.7"  # dev-dependencies
+```
+
+- [ ] **Step 1: Write all 13 RED tests** (from §12.11 Phase 1): classify 200-599, retry success, rate limit recovery, exhaustion, cancellation, context-length propagation, non-compounding 429
+- [ ] **Step 2: RED** — `cargo test embed::retry::tests` → fail
+- [ ] **Step 3: GREEN** — Implement classify_http_response, RetryPolicy, embed_with_retry, is_retryable, sleep_with_jitter
+- [ ] **Step 4:** Lint + fmt
+- [ ] **Step 5:** Commit
+
+---
+
+### Task 16: OpenAiProvider
+
+**Files:**
+- Create: `src/embed/openai.rs`
+- Modify: `src/embed/mod.rs` (add `pub mod openai;`)
+
+**Interfaces:**
+- Produces: `OpenAiProvider` struct implementing `EmbedBatchFn`
+- Produces: `OpenAiProvider::new(cfg: &EmbedConfig) -> Result<Self, PipelineError>`
+- Produces: `fn embed_batch_raw(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, PipelineError>`
+
+- [ ] **Step 1: Write 8 RED tests** (§12.11 Phase 2): correct count, dims, matryoshka param, non-matryoshka skip, index sorting, Azure header, Azure api-version, client-side truncation
+- [ ] **Step 2: RED** — `cargo test embed::openai::tests` → fail
+- [ ] **Step 3: GREEN** — Implement OpenAiProvider with reqwest, build_request, embed_batch_raw, EmbedBatchFn impl
+- [ ] **Step 4:** Lint + fmt
+- [ ] **Step 5:** Commit
+
+---
+
+### Task 17: VoyageAiProvider
+
+**Files:**
+- Create: `src/embed/voyageai.rs`
+- Modify: `src/embed/mod.rs` (add `pub mod voyageai;`)
+
+- [ ] **Step 1: Write 5 RED tests** (§12.11 Phase 3): count, dims, output_dimension param, truncation=true, input_type=document, index sorting
+- [ ] **Step 2: RED** → `cargo test embed::voyageai::tests` → fail
+- [ ] **Step 3: GREEN** → Implement VoyageAiProvider
+- [ ] **Step 4:** Lint + fmt
+- [ ] **Step 5:** Commit
+
+---
+
+### Task 18: Provider Factory
+
+**Files:**
+- Create: `src/embed/factory.rs`
+- Modify: `src/embed/mod.rs` (add `pub mod factory;`)
+
+- [ ] **Step 1: Write 3 RED tests**: openai routing, voyageai routing, unknown → fallback
+- [ ] **Step 2: RED** → fail
+- [ ] **Step 3: GREEN** → create_embed_fn()
+- [ ] **Step 4:** Lint + fmt
+- [ ] **Step 5:** Commit
+
+---
+
+### Task 19: Integration — Wire Factory into Pipeline
+
+**Files:**
+- Modify: `src/pipeline/pipeline.rs`
+
+- [ ] **Step 1:** Replace `Box::new(PythonEmbedCallback::new(cb))` with `create_embed_fn(&config, Some(cb))`
+- [ ] **Step 2:** Add `dispatch_batch_with_retry()` wrapper
+- [ ] **Step 3:** `cargo test` — all existing tests pass with new provider dispatch
+- [ ] **Step 4:** Lint + fmt
+- [ ] **Step 5:** Commit
+
+---
+
+### Task 20: Parity Tests — Rust vs Python Output
+
+**Files:**
+- Create: `tests/contracts/test_provider_parity.py`
+
+- [ ] **Step 1:** Write 2 parity tests: same input → same vectors for OpenAI and VoyageAI
+- [ ] **Step 2:** Run with CI mock server or skip if no API keys
+- [ ] **Step 3:** Commit
+
+---
+
+## Phase 2 Final Verification Gate
+
+```bash
+cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+uv run pytest tests/contracts/ -v
+uv run pytest tests/test_smoke.py -v -n auto
+```
+
+Expected: 93 tests pass (58 Phase 1 + 35 Phase 2), smoke tests pass.
