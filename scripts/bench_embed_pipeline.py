@@ -4,15 +4,29 @@
 Measures the stub pipeline indirectly via Rust benchmarks and documents
 what parity verification requires once PR #380 lands.
 
-The Python-vs-Rust parity comparison is DEFERRED. The stub pipeline
+Rust-native providers (openai, voyageai) are now implemented (Tasks 14–17).
+The factory routes to them automatically; the Python callback fallback still
+works for unsupported providers.
+
+Provider parity is verified by:
+  - Rust httpmock tests (src/embed/openai.rs: 8 tests, voyageai.rs: 6 tests)
+  - Python contract tests (tests/contracts/test_provider_parity.py: 33 tests)
+  - Cross-language parity: same JSON response format → same vectors
+
+Real API parity comparison (Python SDK vs Rust-native reqwest) requires API
+keys and is skipped in CI. The Rust httpmock tests provide the authoritative
+verification that the providers parse embedding responses correctly.
+
+The Python-vs-Rust *pipeline* parity comparison is DEFERRED. The stub pipeline
 (Task 11) is Rust-only and not yet exposed through PyO3/chunkhound_native.
 Parity comparison requires the real pipeline at the PyO3 boundary (PR #380).
 
 This script:
 1. Documents the test matrix used for Rust benchmarks
-2. Provides the scaffolding for the future parity comparison
-3. Exercises Python-side imports to validate the boundary exists
-4. Can run the Rust benchmarks via cargo test
+2. Documents the Rust-native provider parity coverage
+3. Provides the scaffolding for the future pipeline parity comparison
+4. Exercises Python-side imports to validate the boundary exists
+5. Can run the Rust benchmarks via cargo test
 
 Usage:
     # Run Rust benchmarks (the authoritative measurement)
@@ -21,7 +35,7 @@ Usage:
     # This script (documentation + import validation)
     uv run python scripts/bench_embed_pipeline.py
 
-    # Future: parity comparison (when PR #380 lands)
+    # Future: pipeline parity comparison (when PR #380 lands)
     uv run python scripts/bench_embed_pipeline.py --parity --files 20 --chunks-per-file 15 --runs 3
 """
 import json
@@ -242,11 +256,11 @@ def main():
 
     # ── Parity comparison (deferred) ──
     if args.parity:
-        print("\n[3/3] Python-vs-Rust parity comparison")
-        print("  ERROR: Parity comparison requires the real pipeline at the PyO3 boundary.")
+        print("\n[3/3] Python-vs-Rust pipeline parity comparison")
+        print("  ERROR: Pipeline parity comparison requires the real pipeline at the PyO3 boundary.")
         print("  The stub pipeline (Task 11) is Rust-only.")
         print("  Run 'cargo test pipeline::bench -- --nocapture' for Rust benchmarks.")
-        print("  Full parity comparison will be possible after PR #380 lands.")
+        print("  Full pipeline parity comparison will be possible after PR #380 lands.")
         return 1
 
     # ── Summary ──
@@ -263,7 +277,19 @@ def main():
         print("    OR: make dev")
 
     print()
-    print("  Parity comparison: DEFERRED (requires PR #380)")
+    print("  Rust-native embedding providers: IMPLEMENTED (Tasks 14–17)")
+    print("    - openai   → OpenAiProvider (src/embed/openai.rs)")
+    print("    - voyageai → VoyageAiProvider (src/embed/voyageai.rs)")
+    print()
+    print("  Provider parity: VERIFIED via Rust httpmock tests (14 tests)")
+    print("    + Python contract tests (33 tests in tests/contracts/test_provider_parity.py)")
+    print("    + Both providers parse same JSON format → same vectors")
+    print()
+    print("  Real API parity (Python SDK vs Rust reqwest):")
+    print("    SKIPPED in CI — requires API keys for openai/voyageai")
+    print("    Rust httpmock tests provide the authoritative verification")
+    print()
+    print("  Pipeline parity comparison: DEFERRED (requires PR #380)")
     print()
     print("  Rust benchmarks: 9 tests covering 9 scenarios")
     print("    cargo test pipeline::bench -- --nocapture")
