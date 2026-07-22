@@ -2,6 +2,7 @@ pub mod callback;
 pub mod openai;
 pub mod retry;
 pub mod token;
+pub mod voyageai;
 
 use crate::embed::callback::extract_vectors_from_python;
 use pyo3::prelude::*;
