@@ -225,7 +225,12 @@ fn embed_with_split_inner(
             left
         }
         Err(e) => {
-            log::warn!("{provider} embed_with_split failed: {e}");
+            // Cancellation is normal control flow, not a warning condition.
+            if matches!(e, PipelineError::Cancelled) {
+                log::debug!("{provider} embed_with_split cancelled");
+            } else {
+                log::warn!("{provider} embed_with_split failed: {e}");
+            }
             vec![None; texts.len()]
         }
     }
