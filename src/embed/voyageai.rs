@@ -1,5 +1,6 @@
-#![expect(dead_code)]
+use std::sync::atomic::AtomicBool;
 
+use crate::embed::retry::{classify_http_status, embed_with_split, RetryPolicy};
 use crate::embed::{BatchCallStats, EmbedBatchFn, EmbedBatchResult};
 use crate::error::PipelineError;
 
@@ -78,7 +79,20 @@ impl VoyageAiProvider {
 
         let status = response.status().as_u16();
         if !(200..=299).contains(&status) {
-            return Err(classify_http_response_err("voyageai", response));
+            let retry_after_secs = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            let body = response.text().unwrap_or_default();
+            return Err(
+                classify_http_status("voyageai", status, retry_after_secs, &body).unwrap_or_else(
+                    || PipelineError::ProviderError {
+                        provider: "voyageai".into(),
+                        message: format!("HTTP {status}"),
+                    },
+                ),
+            );
         }
 
         #[derive(serde::Deserialize)]
@@ -105,50 +119,6 @@ impl VoyageAiProvider {
     }
 }
 
-/// Classify an HTTP error response into a PipelineError.
-fn classify_http_response_err(
-    provider: &str,
-    response: reqwest::blocking::Response,
-) -> PipelineError {
-    let status = response.status().as_u16();
-    match status {
-        401 | 403 => PipelineError::Auth {
-            provider: provider.into(),
-            message: format!("HTTP {status}"),
-        },
-        429 => {
-            let retry_after_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
-            PipelineError::RateLimited {
-                provider: provider.into(),
-                retry_after_secs,
-            }
-        }
-        400..=499 => {
-            let body = response.text().unwrap_or_default();
-            if body.contains("context length") || body.contains("maximum context length") {
-                PipelineError::ContextLengthExceeded(body)
-            } else {
-                PipelineError::BadRequest {
-                    provider: provider.into(),
-                    message: body,
-                }
-            }
-        }
-        500..=599 => PipelineError::ProviderError {
-            provider: provider.into(),
-            message: format!("HTTP {status}"),
-        },
-        _ => PipelineError::ProviderError {
-            provider: provider.into(),
-            message: format!("unexpected HTTP {status}"),
-        },
-    }
-}
-
 impl EmbedBatchFn for VoyageAiProvider {
     fn embed_batch(
         &self,
@@ -157,20 +127,16 @@ impl EmbedBatchFn for VoyageAiProvider {
         _model: &str,
         _dims: usize,
     ) -> EmbedBatchResult {
-        match self.embed_batch_raw(texts) {
-            Ok(vectors) => EmbedBatchResult {
-                vectors: vectors.into_iter().map(Some).collect(),
-                stats: BatchCallStats {
-                    api_calls: 1,
-                    total_latency_ms: 0,
-                },
-            },
-            Err(_) => EmbedBatchResult {
-                vectors: vec![None; texts.len()],
-                stats: BatchCallStats {
-                    api_calls: 1,
-                    total_latency_ms: 0,
-                },
+        let cancelled = AtomicBool::new(false);
+        let policy = RetryPolicy::default();
+        let vectors = embed_with_split("voyageai", texts, &policy, &cancelled, |batch| {
+            self.embed_batch_raw(batch)
+        });
+        EmbedBatchResult {
+            vectors,
+            stats: BatchCallStats {
+                api_calls: 1,
+                total_latency_ms: 0,
             },
         }
     }
@@ -348,5 +314,64 @@ mod tests {
         assert_eq!(result.vectors[1].as_ref().unwrap(), &[4.0, 5.0, 6.0]);
         assert_eq!(result.vectors[2].as_ref().unwrap(), &[0.1, 0.2, 0.3]);
         mock.assert();
+    }
+
+    // ── Test 7: context length exceeded splits batch ─────────────────────
+
+    #[test]
+    fn context_length_splits_batch() {
+        let server = MockServer::start();
+
+        // Full 2-item batch → 400 context-length error
+        let full_batch_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/embeddings")
+                .header("Authorization", "Bearer vp-test-key")
+                .matches(|req| {
+                    let body_bytes = req.body.as_deref().unwrap_or(b"");
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+                        v["input"].as_array().map(|a| a.len()) == Some(2)
+                    } else {
+                        false
+                    }
+                });
+            then.status(400)
+                .body("maximum context length exceeded for this model");
+        });
+
+        // Single-item batches → success
+        let single_item_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/embeddings")
+                .header("Authorization", "Bearer vp-test-key")
+                .matches(|req| {
+                    let body_bytes = req.body.as_deref().unwrap_or(b"");
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+                        v["input"].as_array().map(|a| a.len()) == Some(1)
+                    } else {
+                        false
+                    }
+                });
+            then.status(200).json_body(serde_json::json!({
+                "data": [{"index": 0, "embedding": vec![0.1_f32; 8]}]
+            }));
+        });
+
+        let provider = voyageai_cfg(&server);
+
+        let texts = make_texts(2);
+        let result = provider.embed_batch(&texts, "voyageai", "voyage-3", 8);
+
+        assert_eq!(result.vectors.len(), 2);
+        assert!(
+            result.vectors[0].is_some(),
+            "first vector should be Some after split"
+        );
+        assert!(
+            result.vectors[1].is_some(),
+            "second vector should be Some after split"
+        );
+        full_batch_mock.assert();
+        single_item_mock.assert_hits(2);
     }
 }
