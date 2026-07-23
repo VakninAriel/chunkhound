@@ -1,10 +1,11 @@
-#![expect(dead_code)]
+use std::sync::atomic::AtomicBool;
 
+use crate::embed::retry::{classify_http_status, embed_with_split, RetryPolicy};
 use crate::embed::{BatchCallStats, EmbedBatchFn, EmbedBatchResult};
 use crate::error::PipelineError;
 
 /// Configuration for an OpenAI-compatible embedding provider.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EmbedConfig {
     pub provider: String,
     pub model: String,
@@ -16,6 +17,22 @@ pub struct EmbedConfig {
     pub ssl_verify: bool,
     /// Explicitly force Azure mode (default: None = auto-detect from base_url).
     pub is_azure: Option<bool>,
+}
+
+impl std::fmt::Debug for EmbedConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmbedConfig")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .field("output_dims", &self.output_dims)
+            .field("matryoshka", &self.matryoshka)
+            .field("api_version", &self.api_version)
+            .field("ssl_verify", &self.ssl_verify)
+            .field("is_azure", &self.is_azure)
+            .finish()
+    }
 }
 
 impl Default for EmbedConfig {
@@ -130,7 +147,20 @@ impl OpenAiProvider {
         // Otherwise parse the body directly (no double-send).
         let status = response.status().as_u16();
         if !(200..=299).contains(&status) {
-            return Err(classify_http_response_err("openai", response));
+            let retry_after_secs = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            let body = response.text().unwrap_or_default();
+            return Err(
+                classify_http_status("openai", status, retry_after_secs, &body).unwrap_or_else(
+                    || PipelineError::ProviderError {
+                        provider: "openai".into(),
+                        message: format!("HTTP {status}"),
+                    },
+                ),
+            );
         }
 
         #[derive(serde::Deserialize)]
@@ -180,51 +210,6 @@ fn l2_normalize(v: &mut [f32]) {
     }
 }
 
-/// Like `classify_http_response` but takes an already-received response
-/// and classifies error statuses from it, returning a PipelineError.
-fn classify_http_response_err(
-    provider: &str,
-    response: reqwest::blocking::Response,
-) -> PipelineError {
-    let status = response.status().as_u16();
-    match status {
-        401 | 403 => PipelineError::Auth {
-            provider: provider.into(),
-            message: format!("HTTP {status}"),
-        },
-        429 => {
-            let retry_after_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
-            PipelineError::RateLimited {
-                provider: provider.into(),
-                retry_after_secs,
-            }
-        }
-        400..=499 => {
-            let body = response.text().unwrap_or_default();
-            if body.contains("context length") || body.contains("maximum context length") {
-                PipelineError::ContextLengthExceeded(body)
-            } else {
-                PipelineError::BadRequest {
-                    provider: provider.into(),
-                    message: body,
-                }
-            }
-        }
-        500..=599 => PipelineError::ProviderError {
-            provider: provider.into(),
-            message: format!("HTTP {status}"),
-        },
-        _ => PipelineError::ProviderError {
-            provider: provider.into(),
-            message: format!("unexpected HTTP {status}"),
-        },
-    }
-}
-
 impl EmbedBatchFn for OpenAiProvider {
     fn embed_batch(
         &self,
@@ -233,20 +218,16 @@ impl EmbedBatchFn for OpenAiProvider {
         _model: &str,
         _dims: usize,
     ) -> EmbedBatchResult {
-        match self.embed_batch_raw(texts) {
-            Ok(vectors) => EmbedBatchResult {
-                vectors: vectors.into_iter().map(Some).collect(),
-                stats: BatchCallStats {
-                    api_calls: 1,
-                    total_latency_ms: 0,
-                },
-            },
-            Err(_) => EmbedBatchResult {
-                vectors: vec![None; texts.len()],
-                stats: BatchCallStats {
-                    api_calls: 1,
-                    total_latency_ms: 0,
-                },
+        let cancelled = AtomicBool::new(false);
+        let policy = RetryPolicy::default();
+        let vectors = embed_with_split("openai", texts, &policy, &cancelled, |batch| {
+            self.embed_batch_raw(batch)
+        });
+        EmbedBatchResult {
+            vectors,
+            stats: BatchCallStats {
+                api_calls: 1,
+                total_latency_ms: 0,
             },
         }
     }
@@ -538,5 +519,65 @@ mod tests {
             "should be L2-normalized, got norm={norm}"
         );
         mock.assert();
+    }
+
+    // ── Test 9: context length exceeded splits the batch ────────────────
+
+    #[test]
+    fn context_length_splits_batch() {
+        let server = MockServer::start();
+
+        // Full 2-item batch → 400 context-length error
+        let full_batch_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/embeddings")
+                .header("Authorization", "Bearer sk-test-key")
+                .matches(|req| {
+                    let body_bytes = req.body.as_deref().unwrap_or(b"");
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+                        v["input"].as_array().map(|a| a.len()) == Some(2)
+                    } else {
+                        false
+                    }
+                });
+            then.status(400)
+                .body("maximum context length exceeded for this model");
+        });
+
+        // Single-item batches → success
+        let single_item_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/embeddings")
+                .header("Authorization", "Bearer sk-test-key")
+                .matches(|req| {
+                    let body_bytes = req.body.as_deref().unwrap_or(b"");
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+                        v["input"].as_array().map(|a| a.len()) == Some(1)
+                    } else {
+                        false
+                    }
+                });
+            then.status(200).json_body(serde_json::json!({
+                "data": [{"index": 0, "embedding": vec![0.1_f32; 8]}]
+            }));
+        });
+
+        let cfg = openai_cfg(&server);
+        let provider = OpenAiProvider::new(&cfg).unwrap();
+
+        let texts = make_texts(2);
+        let result = provider.embed_batch(&texts, "openai", "text-embedding-3-small", 8);
+
+        assert_eq!(result.vectors.len(), 2);
+        assert!(
+            result.vectors[0].is_some(),
+            "first vector should be Some after split"
+        );
+        assert!(
+            result.vectors[1].is_some(),
+            "second vector should be Some after split"
+        );
+        full_batch_mock.assert();
+        single_item_mock.assert_hits(2);
     }
 }
