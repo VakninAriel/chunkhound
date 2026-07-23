@@ -1,5 +1,3 @@
-#![expect(dead_code)]
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -31,66 +29,75 @@ impl Default for RetryPolicy {
 
 // ── classify_http_response ──────────────────────────────────────────────────
 
-/// Map an HTTP response to a typed `PipelineError`.
+/// Classify an HTTP status + body into a `PipelineError`.
 ///
-/// Takes ownership of the response so the body can be read for 4xx
-/// classification (context-length checks).
-pub fn classify_http_response(
+/// Returns `None` for 2xx (success). Shared by all native providers so that
+/// error detection strings stay in one place.
+pub(crate) fn classify_http_status(
     provider: &str,
-    response: reqwest::blocking::Response,
-) -> Result<(), PipelineError> {
-    let status = response.status().as_u16();
-
+    status: u16,
+    retry_after_secs: Option<u64>,
+    body: &str,
+) -> Option<PipelineError> {
     match status {
-        200..=299 => Ok(()),
-        401 | 403 => Err(PipelineError::Auth {
+        200..=299 => None,
+        401 | 403 => Some(PipelineError::Auth {
             provider: provider.into(),
             message: format!("HTTP {status}"),
         }),
-        429 => {
-            let retry_after_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
-            Err(PipelineError::RateLimited {
-                provider: provider.into(),
-                retry_after_secs,
-            })
-        }
+        429 => Some(PipelineError::RateLimited {
+            provider: provider.into(),
+            retry_after_secs,
+        }),
         400..=499 => {
-            let body = response.text().unwrap_or_default();
             if body.contains("context length") || body.contains("maximum context length") {
-                Err(PipelineError::ContextLengthExceeded(body))
+                Some(PipelineError::ContextLengthExceeded(body.into()))
             } else {
-                Err(PipelineError::BadRequest {
+                Some(PipelineError::BadRequest {
                     provider: provider.into(),
-                    message: body,
+                    message: body.into(),
                 })
             }
         }
-        500..=599 => Err(PipelineError::ProviderError {
+        500..=599 => Some(PipelineError::ProviderError {
             provider: provider.into(),
             message: format!("HTTP {status}"),
         }),
-        _ => Err(PipelineError::ProviderError {
+        _ => Some(PipelineError::ProviderError {
             provider: provider.into(),
             message: format!("unexpected HTTP {status}"),
         }),
     }
 }
 
-// ── retry helpers ───────────────────────────────────────────────────────────
-
-/// Returns `true` when the error variant permits retrying.
-pub fn is_retryable(e: &PipelineError) -> bool {
-    matches!(
-        e,
-        PipelineError::ProviderError { .. }
-            | PipelineError::RateLimited { .. }
-            | PipelineError::ContextLengthExceeded(_)
-    )
+/// Map an HTTP response to a typed `PipelineError`.
+///
+/// Takes ownership of the response so the body can be read for 4xx
+/// classification (context-length checks).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn classify_http_response(
+    provider: &str,
+    response: reqwest::blocking::Response,
+) -> Result<(), PipelineError> {
+    let status = response.status().as_u16();
+    let retry_after_secs = response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    let body = if !(200..=299).contains(&status) && status != 401 && status != 403 && status != 429
+    {
+        response.text().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    match classify_http_status(provider, status, retry_after_secs, &body) {
+        None => Ok(()),
+        Some(e) => Err(e),
+    }
 }
+
+// ── retry helpers ───────────────────────────────────────────────────────────
 
 /// Sleep for `duration` with optional 0–25 % jitter.
 pub fn sleep_with_jitter(duration: Duration, jitter: bool) {
@@ -174,6 +181,52 @@ where
 
                 sleep_with_jitter(delay, policy.jitter);
             }
+        }
+    }
+}
+
+// ── embed_with_split ────────────────────────────────────────────────────────
+
+/// Type alias for the embed factory closure used by `embed_with_split`.
+type EmbedFn<'a> = dyn FnMut(&[String]) -> Result<Vec<Vec<f32>>, PipelineError> + 'a;
+
+/// Call `embed_with_retry`, splitting the batch in half on `ContextLengthExceeded`.
+///
+/// Recursion bottoms out at single-item batches, which return `None` on failure
+/// rather than recursing further. All other errors produce `None` for the entire
+/// (sub-)batch and log a warning.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn embed_with_split(
+    provider: &str,
+    texts: &[String],
+    policy: &RetryPolicy,
+    cancelled: &AtomicBool,
+    mut make_fn: impl FnMut(&[String]) -> Result<Vec<Vec<f32>>, PipelineError>,
+) -> Vec<Option<Vec<f32>>> {
+    embed_with_split_inner(provider, texts, policy, cancelled, &mut make_fn)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn embed_with_split_inner(
+    provider: &str,
+    texts: &[String],
+    policy: &RetryPolicy,
+    cancelled: &AtomicBool,
+    make_fn: &mut EmbedFn<'_>,
+) -> Vec<Option<Vec<f32>>> {
+    match embed_with_retry(provider, || make_fn(texts), policy, cancelled) {
+        Ok(vectors) => vectors.into_iter().map(Some).collect(),
+        Err(PipelineError::ContextLengthExceeded(_)) if texts.len() > 1 => {
+            let mid = texts.len() / 2;
+            let mut left =
+                embed_with_split_inner(provider, &texts[..mid], policy, cancelled, make_fn);
+            let right = embed_with_split_inner(provider, &texts[mid..], policy, cancelled, make_fn);
+            left.extend(right);
+            left
+        }
+        Err(e) => {
+            log::warn!("{provider} embed_with_split failed: {e}");
+            vec![None; texts.len()]
         }
     }
 }
@@ -511,5 +564,79 @@ mod tests {
             elapsed < Duration::from_secs(2),
             "expected ~1 s delay, got {elapsed:?} — delay may be compounding"
         );
+    }
+
+    // ── embed_with_split tests ───────────────────────────────────────────
+
+    #[test]
+    fn split_succeeds_on_first_attempt() {
+        let policy = default_policy();
+        let cancelled = cancelled_flag();
+
+        let texts: Vec<String> = vec!["hello".into(), "world".into()];
+        let result = embed_with_split("openai", &texts, &policy, &cancelled, |batch| {
+            Ok(batch.iter().map(|t| vec![t.len() as f32]).collect())
+        });
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Some(vec![5.0]));
+        assert_eq!(result[1], Some(vec![5.0]));
+    }
+
+    #[test]
+    fn split_halves_batch_on_context_length() {
+        let policy = default_policy();
+        let cancelled = cancelled_flag();
+
+        // 4 texts: first call (full batch of 4) fails with ContextLengthExceeded;
+        // subsequent calls (halves of 2) succeed.
+        let texts: Vec<String> = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+        let call_count = std::cell::Cell::new(0u32);
+
+        let result = embed_with_split("openai", &texts, &policy, &cancelled, |batch| {
+            let n = call_count.get();
+            call_count.set(n + 1);
+            if n == 0 {
+                // First call: full batch — fail
+                Err(PipelineError::ContextLengthExceeded("too long".into()))
+            } else {
+                // Subsequent calls (halves) succeed
+                Ok(batch.iter().map(|t| vec![t.len() as f32]).collect())
+            }
+        });
+
+        assert_eq!(result.len(), 4);
+        assert!(
+            result.iter().all(|v| v.is_some()),
+            "all 4 vectors should be Some"
+        );
+    }
+
+    #[test]
+    fn split_bottoms_out_at_single_item() {
+        let policy = default_policy();
+        let cancelled = cancelled_flag();
+
+        // Single item that always fails with ContextLengthExceeded → returns [None]
+        let texts: Vec<String> = vec!["oversized".into()];
+        let result = embed_with_split("openai", &texts, &policy, &cancelled, |_batch| {
+            Err(PipelineError::ContextLengthExceeded("too long".into()))
+        });
+
+        assert_eq!(result, vec![None]);
+    }
+
+    #[test]
+    fn split_respects_cancellation() {
+        let policy = default_policy();
+        let cancelled = AtomicBool::new(true); // pre-cancelled
+
+        let texts: Vec<String> = vec!["x".into(), "y".into(), "z".into()];
+        let result = embed_with_split("openai", &texts, &policy, &cancelled, |batch| {
+            Ok(batch.iter().map(|_| vec![1.0]).collect())
+        });
+
+        // embed_with_retry returns Cancelled error → hits generic Err arm → all None
+        assert_eq!(result, vec![None, None, None]);
     }
 }
