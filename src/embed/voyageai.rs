@@ -115,6 +115,13 @@ impl VoyageAiProvider {
 
         let vectors: Vec<Vec<f32>> = items.into_iter().map(|item| item.embedding).collect();
 
+        if vectors.len() != texts.len() {
+            return Err(PipelineError::ProviderError {
+                provider: "voyageai".into(),
+                message: format!("expected {} embeddings, got {}", texts.len(), vectors.len()),
+            });
+        }
+
         Ok(vectors)
     }
 }

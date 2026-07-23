@@ -195,7 +195,6 @@ type EmbedFn<'a> = dyn FnMut(&[String]) -> Result<Vec<Vec<f32>>, PipelineError> 
 /// Recursion bottoms out at single-item batches, which return `None` on failure
 /// rather than recursing further. All other errors produce `None` for the entire
 /// (sub-)batch and log a warning.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn embed_with_split(
     provider: &str,
     texts: &[String],
@@ -206,7 +205,6 @@ pub fn embed_with_split(
     embed_with_split_inner(provider, texts, policy, cancelled, &mut make_fn)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn embed_with_split_inner(
     provider: &str,
     texts: &[String],

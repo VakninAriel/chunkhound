@@ -183,6 +183,13 @@ impl OpenAiProvider {
 
         let mut vectors: Vec<Vec<f32>> = items.into_iter().map(|item| item.embedding).collect();
 
+        if vectors.len() != texts.len() {
+            return Err(PipelineError::ProviderError {
+                provider: "openai".into(),
+                message: format!("expected {} embeddings, got {}", texts.len(), vectors.len()),
+            });
+        }
+
         // Client-side truncation: if matryoshka=false and output_dims is set,
         // slice and L2-normalize.
         if !self.matryoshka {
