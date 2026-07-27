@@ -52,13 +52,28 @@ def test_chunkhound_native_importable():
     assert hasattr(chunkhound_native, "RustDbWriter"), "RustDbWriter must exist"
 
 
+import re
+import pathlib
+
+
+def _count_rust_tests(rel_path: str) -> int:
+    """Count #[test] annotations in a Rust source file."""
+    src_path = pathlib.Path(__file__).parent.parent.parent / rel_path
+    if not src_path.exists():
+        return -1
+    return len(re.findall(r"#\[test\]", src_path.read_text()))
+
+
 def test_rust_openai_test_count():
     """Contract: 8 tests in src/embed/openai.rs."""
     # returns_correct_count, returns_correct_dims,
     # sends_dimensions_param_for_matryoshka, skips_dimensions_for_non_matryoshka,
     # sorts_by_index, azure_uses_api_key_header, azure_appends_api_version,
     # client_side_truncation_slices_and_normalizes
-    assert 8 == 8, "documentation assert: 8 openai tests"
+    count = _count_rust_tests("src/embed/openai.rs")
+    if count == -1:
+        pytest.skip("src/embed/openai.rs not found")
+    assert count == 8, f"Expected 8 OpenAI tests, got {count}"
 
 
 def test_rust_voyageai_test_count():
@@ -66,7 +81,10 @@ def test_rust_voyageai_test_count():
     # returns_correct_count, returns_correct_dims,
     # sends_output_dimension_param, always_sends_truncation_true,
     # always_sends_input_type_document, sorts_by_index
-    assert 6 == 6, "documentation assert: 6 voyageai tests"
+    count = _count_rust_tests("src/embed/voyageai.rs")
+    if count == -1:
+        pytest.skip("src/embed/voyageai.rs not found")
+    assert count == 6, f"Expected 6 VoyageAI tests, got {count}"
 
 
 def test_rust_embed_trait_test_count():
@@ -75,15 +93,21 @@ def test_rust_embed_trait_test_count():
     # mock_embed_batch_partial_failure, mock_embed_batch_all_failure,
     # mock_embed_batch_empty_input, mock_embed_batch_reports_stats,
     # embed_batch_fn_is_object_safe
-    assert 7 == 7, "documentation assert: 7 embed trait tests"
+    count = _count_rust_tests("src/embed/mod.rs")
+    if count == -1:
+        pytest.skip("src/embed/mod.rs not found")
+    assert count == 7, f"Expected 7 EmbedBatchFn trait tests, got {count}"
 
 
 def test_rust_factory_test_count():
-    """Contract: 4 factory routing tests in src/embed/factory.rs."""
-    # routes_openai_to_native_provider, routes_voyageai_to_native_provider,
-    # unknown_provider_falls_back_to_python_callback,
+    """Contract: 5 factory routing tests in src/embed/factory.rs."""
+    # routes_openai_to_native_provider, routes_azure_to_native_openai_provider,
+    # routes_voyageai_to_native_provider, unknown_provider_falls_back_to_python_callback,
     # unknown_provider_without_callback_is_error
-    assert 4 == 4, "documentation assert: 4 factory tests"
+    count = _count_rust_tests("src/embed/factory.rs")
+    if count == -1:
+        pytest.skip("src/embed/factory.rs not found")
+    assert count == 5, f"Expected 5 factory tests, got {count}"
 
 
 # ══════════════════════════════════════════════════════════════════════════

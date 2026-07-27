@@ -10,7 +10,7 @@
 
 use std::time::Instant;
 
-use crate::bloom::{bloom_key, persist_bloom, persist_meta, AtomicBloomFilter, BloomMeta};
+use crate::bloom::{bloom_key, persist_bloom, persist_meta, BloomMeta, SharedBloomFilter};
 use crate::embed::token::BatchChunk;
 use crate::embed::{BatchCallStats, EmbedBatchFn, EmbedBatchResult};
 use crate::pipeline::pipeline::{IndexingPipeline, PipelineConfig, PipelineStats};
@@ -194,7 +194,7 @@ fn bench_bloom_hit_rate_50pct() {
 
     // Pre-populate bloom with keys for even-indexed chunks (50% hit rate)
     let expected_items = 10_000;
-    let mut bloom = AtomicBloomFilter::with_false_pos(0.01, expected_items);
+    let mut bloom = SharedBloomFilter::with_false_pos(0.01, expected_items);
     let chunks = generate_chunks(1_000);
     for i in (0..chunks.len()).step_by(2) {
         bloom.insert(&bloom_key(
@@ -244,7 +244,7 @@ fn bench_bloom_hit_rate_90pct() {
     let meta_path = temp_dir.path().join("embeddings.bloom.meta");
 
     let expected_items = 10_000;
-    let mut bloom = AtomicBloomFilter::with_false_pos(0.01, expected_items);
+    let mut bloom = SharedBloomFilter::with_false_pos(0.01, expected_items);
     let chunks = generate_chunks(1_000);
 
     // Populate 900 of 1000 keys

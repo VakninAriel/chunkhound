@@ -12,7 +12,7 @@ use crate::error::PipelineError;
 
 /// Create the appropriate EmbedBatchFn for the given provider configuration.
 ///
-/// - "openai"  → `OpenAiProvider` (Rust-native)
+/// - "openai" / "azure" → `OpenAiProvider` (Rust-native; Azure detected from base_url or `is_azure`)
 /// - "voyageai" → `VoyageAiProvider` (Rust-native)
 /// - Fallback → `PythonEmbedCallback` if `py_callback` is `Some`, otherwise error.
 #[allow(dead_code)]
@@ -21,7 +21,7 @@ pub fn create_embed_fn(
     py_callback: Option<Py<PyAny>>,
 ) -> Result<Box<dyn EmbedBatchFn>, PipelineError> {
     match cfg.provider.as_str() {
-        "openai" => Ok(Box::new(OpenAiProvider::new(cfg)?)),
+        "openai" | "azure" => Ok(Box::new(OpenAiProvider::new(cfg)?)),
         "voyageai" => Ok(Box::new(VoyageAiProvider::new(
             cfg.api_key.clone(),
             cfg.model.clone(),
@@ -71,7 +71,29 @@ mod tests {
         );
     }
 
-    // ── Test 2: voyageai routing ─────────────────────────────────────────
+    // ── Test 2: azure routing ────────────────────────────────────────────
+
+    #[test]
+    fn routes_azure_to_native_openai_provider() {
+        let cfg = EmbedConfig {
+            provider: "azure".into(),
+            model: "text-embedding-3-small".into(),
+            api_key: "azure-key".into(),
+            base_url: None,
+            output_dims: None,
+            matryoshka: false,
+            api_version: None,
+            ssl_verify: true,
+            is_azure: Some(true),
+        };
+        let result = create_embed_fn(&cfg, None);
+        assert!(
+            result.is_ok(),
+            "azure provider must route to native OpenAiProvider"
+        );
+    }
+
+    // ── Test 3: voyageai routing ─────────────────────────────────────────
 
     #[test]
     fn routes_voyageai_to_native_provider() {
@@ -93,7 +115,7 @@ mod tests {
         );
     }
 
-    // ── Test 3: unknown provider with callback → fallback ────────────────
+    // ── Test 4: unknown provider with callback → fallback ────────────────
 
     #[test]
     fn unknown_provider_falls_back_to_python_callback() {
@@ -123,7 +145,7 @@ mod tests {
         });
     }
 
-    // ── Test 4: unknown provider without callback → error ────────────────
+    // ── Test 5: unknown provider without callback → error ────────────────
 
     #[test]
     fn unknown_provider_without_callback_is_error() {

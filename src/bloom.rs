@@ -19,13 +19,13 @@ pub struct BloomMeta {
     pub model: String,
 }
 
-/// Wrapper providing thread-safe concurrent reads via Arc.
-/// Inserts require &mut self (single writer).
-pub struct AtomicBloomFilter {
+/// Bloom filter with thread-safe concurrent reads via Arc.
+/// Writes require `&mut self` (single writer at construction time).
+pub struct SharedBloomFilter {
     inner: BloomFilter,
 }
 
-impl AtomicBloomFilter {
+impl SharedBloomFilter {
     pub fn with_false_pos(fp: f64, expected_items: usize) -> Self {
         Self {
             inner: BloomFilter::with_false_pos(fp)
@@ -58,7 +58,7 @@ struct BloomFilterData {
     num_hashes: u32,
 }
 
-pub fn persist_bloom(bloom: &AtomicBloomFilter, path: &Path) -> Result<(), PipelineError> {
+pub fn persist_bloom(bloom: &SharedBloomFilter, path: &Path) -> Result<(), PipelineError> {
     let payload = BloomFilterData {
         data: bloom.inner.as_slice().to_vec(),
         num_hashes: bloom.inner.num_hashes(),
@@ -79,7 +79,7 @@ pub fn persist_bloom(bloom: &AtomicBloomFilter, path: &Path) -> Result<(), Pipel
     Ok(())
 }
 
-pub fn load_bloom_from_disk(path: &Path) -> Result<Option<AtomicBloomFilter>, PipelineError> {
+pub fn load_bloom_from_disk(path: &Path) -> Result<Option<SharedBloomFilter>, PipelineError> {
     match fs::File::open(path) {
         Ok(file) => {
             let mut reader = BufReader::new(file);
@@ -98,7 +98,7 @@ pub fn load_bloom_from_disk(path: &Path) -> Result<Option<AtomicBloomFilter>, Pi
             let inner = BloomFilter::from_vec(payload.data)
                 .seed(&0)
                 .hashes(payload.num_hashes);
-            Ok(Some(AtomicBloomFilter { inner }))
+            Ok(Some(SharedBloomFilter { inner }))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(PipelineError::IoError {
@@ -127,7 +127,7 @@ pub fn load_or_rebuild_bloom(
     db_dir: &Path,
     provider: &str,
     model: &str,
-) -> Result<Arc<AtomicBloomFilter>, PipelineError> {
+) -> Result<Arc<SharedBloomFilter>, PipelineError> {
     let bloom_path = db_dir.join("embeddings.bloom");
     let meta_path = db_dir.join("embeddings.bloom.meta");
 
@@ -141,7 +141,7 @@ pub fn load_or_rebuild_bloom(
 
     // Rebuild — placeholder: actual DB query will populate via populate_bloom_from_db()
     log::info!("Bloom filter rebuild required — creating empty filter");
-    let bloom = AtomicBloomFilter::with_false_pos(0.01, 1_000_000);
+    let bloom = SharedBloomFilter::with_false_pos(0.01, 1_000_000);
     // Caller is responsible for populating via populate_bloom_from_db() and
     // persisting the result.
     Ok(Arc::new(bloom))
@@ -151,7 +151,7 @@ pub fn load_or_rebuild_bloom(
 /// Called during pipeline startup when bloom needs rebuilding.
 /// Accepts `Option<&Connection>` to support stub/test mode — returns Ok(0) when None.
 pub fn populate_bloom_from_db(
-    bloom: &mut AtomicBloomFilter,
+    bloom: &mut SharedBloomFilter,
     conn: Option<&duckdb::Connection>,
     provider: &str,
     model: &str,
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn bloom_insert_then_contains() {
-        let mut bloom = AtomicBloomFilter::with_false_pos(0.01, 10_000);
+        let mut bloom = SharedBloomFilter::with_false_pos(0.01, 10_000);
         let key = bloom_key("hash1", "openai", "text-embedding-3-small", 1536);
         bloom.insert(&key);
         assert!(bloom.contains(&key), "inserted key must be found");
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn bloom_does_not_contain_uninserted() {
-        let bloom = AtomicBloomFilter::with_false_pos(0.01, 10_000);
+        let bloom = SharedBloomFilter::with_false_pos(0.01, 10_000);
         assert!(!bloom.contains("never-inserted:openai:model:1536"));
     }
 
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn bloom_false_positive_rate_within_bounds() {
         let n_items = 100_000;
-        let mut bloom = AtomicBloomFilter::with_false_pos(0.01, n_items);
+        let mut bloom = SharedBloomFilter::with_false_pos(0.01, n_items);
 
         for i in 0..n_items {
             bloom.insert(&format!("hash{i}:openai:text-embedding-3-small:1536"));
@@ -294,7 +294,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let bloom_path = temp_dir.path().join("embeddings.bloom");
 
-        let mut bloom = AtomicBloomFilter::with_false_pos(0.01, 10_000);
+        let mut bloom = SharedBloomFilter::with_false_pos(0.01, 10_000);
         bloom.insert("hash1:openai:text-embedding-3-small:1536");
         bloom.insert("hash2:openai:text-embedding-3-small:1536");
         persist_bloom(&bloom, &bloom_path).unwrap();
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn bloom_concurrent_reads_across_threads() {
-        let mut bloom = AtomicBloomFilter::with_false_pos(0.01, 100_000);
+        let mut bloom = SharedBloomFilter::with_false_pos(0.01, 100_000);
         for i in 0..50_000 {
             bloom.insert(&format!("hash{i}:openai:model:1536"));
         }

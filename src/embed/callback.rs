@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
@@ -65,10 +63,7 @@ pub fn classify_python_embed_error(py: Python<'_>, err: &PyErr) -> PipelineError
         },
         "BadRequestError" => {
             if msg.contains("context length") || msg.contains("maximum context length") {
-                PipelineError::ProviderError {
-                    provider: "unknown".into(),
-                    message: msg,
-                }
+                PipelineError::ContextLengthExceeded(msg)
             } else {
                 PipelineError::BadRequest {
                     provider: "unknown".into(),

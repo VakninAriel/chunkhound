@@ -5,7 +5,7 @@ pub mod retry;
 pub mod token;
 pub mod voyageai;
 
-use crate::embed::callback::extract_vectors_from_python;
+use crate::embed::callback::{classify_python_embed_error, extract_vectors_from_python};
 use pyo3::prelude::*;
 
 /// A batch embedding function — stateless, synchronous from Rust's perspective.
@@ -65,10 +65,14 @@ impl EmbedBatchFn for PythonEmbedCallback {
                         stats: BatchCallStats::default(),
                     }
                 }
-                Err(_e) => EmbedBatchResult {
-                    vectors: vec![None; texts.len()],
-                    stats: BatchCallStats::default(),
-                },
+                Err(e) => {
+                    let classified = classify_python_embed_error(py, &e);
+                    log::warn!("Python embed callback error: {classified}");
+                    EmbedBatchResult {
+                        vectors: vec![None; texts.len()],
+                        stats: BatchCallStats::default(),
+                    }
+                }
             }
         })
     }

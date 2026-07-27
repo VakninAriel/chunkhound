@@ -18,6 +18,7 @@ use std::path::PathBuf;
 // src/error.rs in chunkhound_native. This duplication is unavoidable because
 // the cdylib crate uses extension-module while this test crate must use
 // auto-initialize, and cargo unifies pyo3 features across dependency kinds.
+// Keep ALL variants and is_fatal() in sync with src/error.rs.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -31,6 +32,9 @@ pub enum PipelineError {
     #[error("pipeline cancelled")]
     Cancelled,
 
+    #[error("context length exceeded: {0}")]
+    ContextLengthExceeded(String),
+
     #[error("provider error for {provider}: {message}")]
     ProviderError { provider: String, message: String },
 
@@ -39,6 +43,9 @@ pub enum PipelineError {
         provider: String,
         retry_after_secs: Option<u64>,
     },
+
+    #[error("unexpected response format: {0}")]
+    ResponseFormat(String),
 
     #[error("database error: {0}")]
     DbError(String),
@@ -81,10 +88,7 @@ pub fn classify_python_embed_error(py: Python<'_>, err: &PyErr) -> PipelineError
         },
         "BadRequestError" => {
             if msg.contains("context length") || msg.contains("maximum context length") {
-                PipelineError::ProviderError {
-                    provider: "unknown".into(),
-                    message: msg,
-                }
+                PipelineError::ContextLengthExceeded(msg)
             } else {
                 PipelineError::BadRequest {
                     provider: "unknown".into(),

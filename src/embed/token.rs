@@ -3,7 +3,7 @@
 pub const CHARS_PER_TOKEN: usize = 3;
 
 pub fn estimate_tokens(text: &str) -> usize {
-    text.len() / CHARS_PER_TOKEN
+    text.chars().count() / CHARS_PER_TOKEN
 }
 
 #[derive(Debug, Clone)]
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn estimate_tokens_unicode_text() {
-        assert_eq!(estimate_tokens("héllo wörld"), 4); // 13 bytes / 3
+        assert_eq!(estimate_tokens("héllo wörld"), 3); // 11 chars / 3
     }
 
     #[test]

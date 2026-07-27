@@ -486,7 +486,7 @@ mod tests {
         let meta_path = temp_dir.path().join("embeddings.bloom.meta");
 
         // Pre-populate bloom with keys for hash0 and hash2 (not hash1)
-        let mut bloom = crate::bloom::AtomicBloomFilter::with_false_pos(0.01, 10_000);
+        let mut bloom = crate::bloom::SharedBloomFilter::with_false_pos(0.01, 10_000);
         bloom.insert(&bloom_key("hash0", "test", "test-model", 8));
         bloom.insert(&bloom_key("hash2", "test", "test-model", 8));
         crate::bloom::persist_bloom(&bloom, &bloom_path).unwrap();
@@ -543,7 +543,7 @@ mod tests {
         let meta_path = temp_dir.path().join("embeddings.bloom.meta");
 
         // First "run": create and persist bloom
-        let mut bloom = crate::bloom::AtomicBloomFilter::with_false_pos(0.01, 10_000);
+        let mut bloom = crate::bloom::SharedBloomFilter::with_false_pos(0.01, 10_000);
         let key = bloom_key("abc123", "openai", "text-embedding-3-small", 1536);
         bloom.insert(&key);
         bloom.insert(&bloom_key(
