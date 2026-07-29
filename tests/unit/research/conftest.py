@@ -67,7 +67,11 @@ def llm_manager(monkeypatch):
 
     monkeypatch.setattr(LLMManager, "_create_provider", _fake_create_provider)
     utility_config = {"provider": "fake", "model": "fake-gpt"}
-    synthesis_config = {"provider": "fake", "model": "fake-gpt"}
+    synthesis_config = {
+        "provider": "fake",
+        "model": "fake-gpt",
+        "output_limits_enabled": True,
+    }
     return LLMManager(utility_config, synthesis_config)
 
 
@@ -80,5 +84,9 @@ def capturing_llm_manager(monkeypatch):
 
     monkeypatch.setattr(LLMManager, "_create_provider", _fake_create_provider)
     utility_config = {"provider": "fake", "model": "fake-gpt"}
-    synthesis_config = {"provider": "fake", "model": "fake-gpt"}
+    synthesis_config = {
+        "provider": "fake",
+        "model": "fake-gpt",
+        "output_limits_enabled": True,
+    }
     return LLMManager(utility_config, synthesis_config), fake_provider

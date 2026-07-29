@@ -14,6 +14,8 @@ non-empty assertions guard against a ``return ""`` regression in the
 builder that would otherwise make ``in prompt`` trivially pass.
 """
 
+from typing import Any, cast
+
 import pytest
 
 from chunkhound.services.clustering_service import ClusterGroup
@@ -23,6 +25,9 @@ from chunkhound.services.prompts import (
 )
 from chunkhound.services.research import SynthesisEngine
 from chunkhound.services.research.shared.models import ResearchContext
+from chunkhound.services.research.v1.pluggable_research_service import (
+    PluggableResearchService,
+)
 from tests.fixtures.fake_providers import FakeEmbeddingProvider
 from tests.unit.research.conftest import FakeParent
 
@@ -34,6 +39,13 @@ def _build_engine(llm_manager):
     return SynthesisEngine(
         llm_manager, database_services=object(), parent_service=parent
     )
+
+
+class _MapLedger:
+    def get_facts_map_prompt_context(
+        self, _file_paths: set[str], *, cluster_id: int
+    ) -> str:
+        return f"facts-{cluster_id}"
 
 
 def _chunks_and_files():
@@ -137,6 +149,56 @@ async def test_map_prompt_includes_follow_up_framing(capturing_llm_manager):
     # Contract: map receives *some* follow-up framing. Either builder is
     # acceptable — we don't pin which one the map stage uses.
     assert hint in prompt or section in prompt
+
+
+@pytest.mark.asyncio
+async def test_map_orchestration_forwards_follow_up_framing(
+    capturing_llm_manager,
+):
+    llm_manager, fake_provider = capturing_llm_manager
+    engine = _build_engine(llm_manager)
+    service = PluggableResearchService.__new__(PluggableResearchService)
+    service._synthesis_engine = engine
+    clusters = [
+        ClusterGroup(
+            cluster_id=index,
+            file_paths=[path],
+            files_content={path: "print('hi')"},
+            total_tokens=20_000,
+        )
+        for index, path in enumerate(("a.py", "b.py"))
+    ]
+    chunks = [
+        {
+            "file_path": path,
+            "content": "print('hi')",
+            "start_line": 1,
+            "end_line": 1,
+        }
+        for path in ("a.py", "b.py")
+    ]
+
+    await service._run_synthesis_maps(
+        cluster_groups=clusters,
+        context=ResearchContext(
+            root_query="synthesis architecture overview",
+            previous_query=PRIOR,
+        ),
+        prioritized_chunks=chunks,
+        synthesis_budgets={"output_tokens": 30_000},
+        constants_context="",
+        evidence_ledger=cast(Any, _MapLedger()),
+        max_concurrency=2,
+    )
+
+    hint = build_follow_up_hint(PRIOR)
+    section = build_follow_up_section(PRIOR)
+    assert hint and section, "builders must be non-empty when previous_query is set"
+    assert len(fake_provider.calls) == 2
+    assert all(
+        hint in call["prompt"] or section in call["prompt"]
+        for call in fake_provider.calls
+    )
 
 
 @pytest.mark.asyncio
