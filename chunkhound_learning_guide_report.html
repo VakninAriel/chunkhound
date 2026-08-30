@@ -1,0 +1,1334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound — Developer Learning Guide</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 260px; min-width: 260px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 10px; }
+    #sidebar .nav-group { margin-bottom: 12px; }
+    #sidebar a { display: block; padding: 7px 20px; color: #cdd6f4; text-decoration: none; font-size: 12.5px; border-left: 3px solid transparent; }
+    #sidebar a:hover, #sidebar a.active { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #sidebar .brand { padding: 16px 20px 20px; border-bottom: 1px solid #313244; margin-bottom: 16px; }
+    #sidebar .brand span { font-size: 16px; font-weight: 700; color: #cba6f7; }
+    #sidebar .brand small { display: block; font-size: 11px; color: #6c7086; margin-top: 2px; }
+    #content-wrap { flex: 1; display: flex; flex-direction: column; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; }
+    header h1 { font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    #main { flex: 1; padding: 36px 40px; max-width: 940px; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px 28px; margin-bottom: 28px; }
+    .section h2 { font-size: 17px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #89b4fa; display: flex; align-items: center; gap: 8px; }
+    .section h2 .num { background: #89b4fa; color: #1e1e2e; font-size: 12px; font-weight: 800; border-radius: 4px; padding: 2px 8px; }
+    .section h3 { font-size: 14px; font-weight: 700; color: #313244; margin: 18px 0 8px; display: flex; align-items: center; gap: 6px; }
+    .section h3::before { content: '▸'; color: #89b4fa; font-size: 12px; }
+    .section p, .section li { font-size: 13.5px; line-height: 1.75; color: #444; }
+    .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+    .section li { margin-bottom: 5px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.6; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 12.5px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; }
+    summary { padding: 11px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 13.5px; color: #333; border-radius: 6px; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; background: #f0f0f8; }
+    details > *:not(summary) { padding: 16px 20px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; font-size: 12px; letter-spacing: 0.5px; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    td code { font-size: 11.5px; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin: 1px 2px; }
+    .tag-blue { background: #dbeafe; color: #1d4ed8; }
+    .tag-purple { background: #ede9fe; color: #6d28d9; }
+    .tag-green { background: #d1fae5; color: #065f46; }
+    .tag-orange { background: #ffedd5; color: #9a3412; }
+    .tag-red { background: #fee2e2; color: #991b1b; }
+    .callout { background: #eff6ff; border-left: 4px solid #89b4fa; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 13px; color: #1e40af; }
+    .callout.warn { background: #fffbeb; border-color: #f59e0b; color: #92400e; }
+    .callout.danger { background: #fef2f2; border-color: #ef4444; color: #991b1b; }
+    .path { font-family: 'Courier New', monospace; font-size: 12px; color: #6d28d9; background: #f5f3ff; padding: 2px 6px; border-radius: 3px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+    .mini-card { background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px 16px; }
+    .mini-card h4 { font-size: 13px; font-weight: 700; color: #1e1e2e; margin-bottom: 6px; }
+    .mini-card p, .mini-card li { font-size: 12.5px; color: #555; }
+    .mini-card ul { padding-left: 16px; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0 32px; border-top: 1px solid #e0e0e0; margin-top: 12px; }
+    .topic-badge { display: inline-flex; align-items: center; gap: 6px; background: #1e1e2e; color: #89b4fa; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+
+<nav id="sidebar">
+  <div class="brand">
+    <span>ChunkHound</span>
+    <small>Developer Learning Guide</small>
+  </div>
+  <div class="nav-group">
+    <h2>Getting Started</h2>
+    <a href="#overview">1. What Is ChunkHound?</a>
+    <a href="#architecture">2. High-Level Architecture</a>
+    <a href="#repo-layout">3. Repository Layout</a>
+  </div>
+  <div class="nav-group">
+    <h2>Core Concepts</h2>
+    <a href="#domain-models">4. Domain Models</a>
+    <a href="#config-system">5. Configuration System</a>
+    <a href="#type-system">6. Type System</a>
+  </div>
+  <div class="nav-group">
+    <h2>Key Pipelines</h2>
+    <a href="#indexing">7. Indexing Pipeline</a>
+    <a href="#search">8. Search Pipeline</a>
+    <a href="#embeddings">9. Embedding System</a>
+  </div>
+  <div class="nav-group">
+    <h2>Subsystems</h2>
+    <a href="#parsers">10. Language Parsers</a>
+    <a href="#database">11. Database Layer</a>
+    <a href="#db-schema">11b. Schema (tables &amp; indexes)</a>
+    <a href="#db-queries">11c. Main Queries</a>
+    <a href="#mcp">12. MCP Server</a>
+    <a href="#cli">13. CLI Interface</a>
+  </div>
+  <div class="nav-group">
+    <h2>Design &amp; Quality</h2>
+    <a href="#patterns">14. Design Patterns</a>
+    <a href="#providers">15. Provider Architecture</a>
+    <a href="#registry">16. Registry &amp; DI</a>
+    <a href="#testing">17. Testing Strategy</a>
+  </div>
+  <div class="nav-group">
+    <h2>Day-to-Day</h2>
+    <a href="#commands">18. Dev Commands</a>
+    <a href="#gotchas">19. Gotchas &amp; Rules</a>
+    <a href="#reading-order">20. Recommended Reading Order</a>
+  </div>
+  <div class="nav-group">
+    <h2>Latest Changes</h2>
+    <a href="#new-features">21. New Features</a>
+  </div>
+</nav>
+
+<div id="content-wrap">
+  <header>
+    <h1>ChunkHound — Developer Learning Guide</h1>
+    <div class="meta">Generated: 2026-07-05 &nbsp;|&nbsp; Audience: Engineers onboarding to the ChunkHound codebase &nbsp;|&nbsp; Template: technical</div>
+  </header>
+
+  <div id="main">
+
+    <!-- 1. OVERVIEW -->
+    <div class="section" id="overview">
+      <h2><span class="num">01</span> What Is ChunkHound?</h2>
+      <p>ChunkHound is a <strong>semantic and regex code search engine</strong> that transforms a codebase into a searchable knowledge base for AI assistants. It parses source files, extracts semantic chunks (functions, classes, etc.), generates vector embeddings, and exposes the results via a CLI and an MCP (Model Context Protocol) server.</p>
+
+      <div class="callout" style="margin-top:16px;">
+        <strong>Key fact:</strong> 100% of this code was written by AI agents — zero human-authored lines. The project is deliberately self-documenting through naming and structure.
+      </div>
+
+      <h3>What it does end-to-end</h3>
+      <ol>
+        <li><strong>Index</strong> — Walk a directory, parse files with tree-sitter, split into semantic chunks</li>
+        <li><strong>Embed</strong> — Send chunks to an embedding provider (OpenAI, VoyageAI) to generate vectors</li>
+        <li><strong>Store</strong> — Persist files, chunks, and vectors in DuckDB (or LanceDB)</li>
+        <li><strong>Search</strong> — Accept a natural-language query, embed it, run ANN vector search, return ranked chunks</li>
+        <li><strong>Serve</strong> — Expose search &amp; index as MCP tools so AI assistants (Claude, Cursor, etc.) can call them</li>
+      </ol>
+
+      <h3>Who uses it</h3>
+      <ul>
+        <li>AI coding assistants needing codebase context (via MCP protocol)</li>
+        <li>Developers searching their own repos semantically from the CLI</li>
+        <li>Automated agents running multi-hop code research</li>
+      </ul>
+    </div>
+
+    <!-- 2. ARCHITECTURE -->
+    <div class="section" id="architecture">
+      <h2><span class="num">02</span> High-Level Architecture</h2>
+      <p>ChunkHound is structured as a layered system with clean separation between domain logic, infrastructure, and external interfaces.</p>
+      <pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                      EXTERNAL INTERFACES                        │
+│   CLI (argparse)          MCP stdio          MCP HTTP           │
+│   chunkhound/api/cli/     mcp_server/stdio   mcp_server/http    │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                      SERVICE LAYER                              │
+│  IndexingCoordinator   SearchService   EmbeddingService         │
+│  DirectoryIndexingService   BatchProcessor   ResearchService    │
+│                  chunkhound/services/                           │
+└───────────┬─────────────────────────────────────┬──────────────┘
+            │                                     │
+┌───────────▼──────────┐             ┌────────────▼─────────────┐
+│    PARSERS           │             │    PROVIDERS             │
+│  UniversalParser     │             │  DuckDB / LanceDB        │
+│  ChunkSplitter (CAST)│             │  OpenAI / VoyageAI embed │
+│  tree-sitter (32 lang│             │  Anthropic / OpenAI LLM  │
+│  chunkhound/parsers/ │             │  chunkhound/providers/   │
+└──────────────────────┘             └──────────────────────────┘
+            │                                     │
+┌───────────▼─────────────────────────────────────▼─────────────┐
+│                      CORE / DOMAIN LAYER                       │
+│     Models: File, Chunk, Embedding                             │
+│     Config (Pydantic), Types (Language/ChunkType enums)        │
+│     Registry (dependency injection container)                  │
+│                  chunkhound/core/                              │
+└────────────────────────────────────────────────────────────────┘</code></pre>
+
+      <h3>Data flow summary</h3>
+      <p><code>Directory</code> → <code>BatchProcessor</code> → <code>UniversalParser</code> → <code>ChunkSplitter</code> → <code>EmbeddingService</code> → <code>DatabaseProvider</code> → <code>SearchService</code> → <code>MCP / CLI</code></p>
+    </div>
+
+    <!-- 3. REPO LAYOUT -->
+    <div class="section" id="repo-layout">
+      <h2><span class="num">03</span> Repository Layout</h2>
+      <table>
+        <tr><th>Path</th><th>Purpose</th><th>Key files</th></tr>
+        <tr>
+          <td><code class="path">chunkhound/core/</code></td>
+          <td>Domain layer — models, types, config, exceptions</td>
+          <td><code>models/</code>, <code>config/</code>, <code>types/common.py</code></td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/services/</code></td>
+          <td>Business logic — orchestrates providers and parsers</td>
+          <td><code>indexing_coordinator.py</code>, <code>search_service.py</code>, <code>embedding_service.py</code></td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/parsers/</code></td>
+          <td>Language parsing — tree-sitter wrappers, CAST chunking</td>
+          <td><code>universal_parser.py</code>, <code>chunk_splitter.py</code>, <code>parser_factory.py</code></td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/providers/</code></td>
+          <td>Pluggable backends for DB, embeddings, LLMs</td>
+          <td><code>database/</code>, <code>embeddings/</code>, <code>llm/</code></td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/registry/</code></td>
+          <td>Dependency injection container</td>
+          <td><code>__init__.py</code> (ProviderRegistry)</td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/api/cli/</code></td>
+          <td>CLI entry point and subcommands</td>
+          <td><code>main.py</code>, <code>commands/</code></td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/mcp_server/</code></td>
+          <td>MCP protocol servers (stdio + HTTP)</td>
+          <td><code>stdio.py</code>, <code>http_server.py</code>, <code>tools.py</code></td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/database.py</code></td>
+          <td>Legacy compatibility wrapper (delegates to services)</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/database_factory.py</code></td>
+          <td>Service composition root — wires everything together</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/watchman/</code></td>
+          <td>File system monitoring (watchdog / watchman / polling)</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code class="path">chunkhound/daemon/</code></td>
+          <td>Multi-client daemon for parallel MCP connections</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code class="path">tests/</code></td>
+          <td>Pytest suite — smoke, unit, integration, e2e</td>
+          <td><code>test_smoke.py</code>, <code>conftest.py</code></td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- 4. DOMAIN MODELS -->
+    <div class="section" id="domain-models">
+      <h2><span class="num">04</span> Domain Models</h2>
+      <p>Three frozen dataclasses form the core of every operation. All are immutable — mutation is handled by creating new instances.</p>
+
+      <details open>
+        <summary>File — represents a source file</summary>
+        <pre><code>@dataclass(frozen=True)
+class File:
+    path: FilePath          # relative path (str alias)
+    mtime: Timestamp        # unix timestamp
+    language: Language      # enum — 32 supported + UNKNOWN
+    size_bytes: int
+    id: FileId | None = None</code></pre>
+        <p style="padding:0 0 8px;">Used for: change detection (mtime), language routing, file-level metadata.</p>
+      </details>
+
+      <details>
+        <summary>Chunk — a semantic code unit</summary>
+        <pre><code>@dataclass(frozen=True)
+class Chunk:
+    symbol: str               # function/class name
+    start_line: LineNumber    # 1-based
+    end_line: LineNumber      # 1-based, inclusive
+    code: str                 # raw source text
+    chunk_type: ChunkType     # function, class, method, header_1 …
+    file_id: FileId
+    language: Language
+    id: ChunkId | None = None
+    parent_header: str | None = None  # markdown heading context</code></pre>
+        <p style="padding:0 0 8px;">The fundamental retrieval unit. Every embedding points to one chunk.</p>
+      </details>
+
+      <details>
+        <summary>Embedding — a vector for one chunk</summary>
+        <pre><code>@dataclass(frozen=True)
+class Embedding:
+    chunk_id: ChunkId
+    provider: ProviderName   # "openai", "voyageai"
+    model: ModelName         # "text-embedding-3-small"
+    dims: Dimensions         # 1536, 3072, 1024 …
+    vector: list[float]
+    created_at: datetime | None</code></pre>
+        <p style="padding:0 0 8px;">Stored in the DB as the HNSW vector index entry.</p>
+      </details>
+    </div>
+
+    <!-- 5. CONFIGURATION -->
+    <div class="section" id="config-system">
+      <h2><span class="num">05</span> Configuration System</h2>
+      <p>All config is Pydantic-validated. Multiple sources are merged in strict precedence order.</p>
+
+      <h3>Precedence (highest → lowest)</h3>
+      <ol>
+        <li>CLI arguments (e.g. <code>--db</code>, <code>--no-embeddings</code>)</li>
+        <li><code>.chunkhound.json</code> in the <em>target directory</em></li>
+        <li>File passed via <code>--config</code></li>
+        <li>Environment variables (<code>CHUNKHOUND_*</code>)</li>
+        <li><strong>Global config file</strong> — auto-discovered in order (see below)</li>
+        <li>Hard-coded defaults</li>
+      </ol>
+
+      <h3>Global config file (new)</h3>
+      <p>A machine-wide config is loaded before project-local files. ChunkHound searches these 6 paths in order, using the first found:</p>
+      <pre><code>1. $CHUNKHOUND_GLOBAL_CONFIG_FILE   (env var override)
+2. ~/.config/chunkhound/chunkhound.json
+3. ~/.config/chunkhound/config.json
+4. ~/.chunkhound/config.json
+5. ~/.chunkhound.json
+6. /etc/chunkhound/config.json</code></pre>
+      <p>This allows setting a default embedding API key or model for all projects on a machine without touching each project's <code>.chunkhound.json</code>.</p>
+
+      <div class="callout warn">
+        <strong>Gotcha:</strong> <code>--config</code> does NOT override a project-local <code>.chunkhound.json</code> for the DB path. Use explicit <code>--db</code> when the target project has its own config.
+      </div>
+
+      <h3>Config structure</h3>
+      <pre><code>Config
+├── database:   DatabaseConfig   # path, provider (duckdb|lancedb)
+├── embedding:  EmbeddingConfig  # provider, model, api_key, batch_size
+├── llm:        LLMConfig        # provider, model, api_key, temperature
+├── mcp:        MCPConfig        # port, hostname, mode
+├── indexing:   IndexingConfig   # chunk sizes, exclude patterns, batch size
+├── research:   ResearchConfig   # time/result limits for multi-hop
+└── debug:      bool</code></pre>
+
+      <h3>Key config files</h3>
+      <table>
+        <tr><th>File</th><th>What it configures</th></tr>
+        <tr><td><code class="path">core/config/config.py</code></td><td>Root <code>Config</code> class + source merging logic</td></tr>
+        <tr><td><code class="path">core/config/embedding_config.py</code></td><td>Embedding provider factory, batch/concurrency tuning</td></tr>
+        <tr><td><code class="path">core/config/database_config.py</code></td><td>DB provider selection and path resolution</td></tr>
+        <tr><td><code class="path">core/config/indexing_config.py</code></td><td>Chunk size limits, file exclude patterns</td></tr>
+      </table>
+    </div>
+
+    <!-- 6. TYPE SYSTEM -->
+    <div class="section" id="type-system">
+      <h2><span class="num">06</span> Type System</h2>
+
+      <div class="two-col">
+        <div class="mini-card">
+          <h4>Type Aliases (chunkhound/core/types/common.py)</h4>
+          <ul>
+            <li><code>ChunkId</code> — int</li>
+            <li><code>FileId</code> — int</li>
+            <li><code>FilePath</code> — str</li>
+            <li><code>ProviderName</code> — str</li>
+            <li><code>ModelName</code> — str</li>
+            <li><code>Timestamp</code> — float</li>
+            <li><code>Dimensions</code> — int</li>
+            <li><code>LineNumber</code> — int</li>
+          </ul>
+        </div>
+        <div class="mini-card">
+          <h4>Key Enums</h4>
+          <p><strong>Language</strong> — 32 values including Python, TypeScript, Rust, Go, C#, Java, YAML, SQL, Markdown … + UNKNOWN</p>
+          <br>
+          <p><strong>ChunkType</strong> — 50+ values: <code>function</code>, <code>class</code>, <code>method</code>, <code>header_1</code>…<code>header_6</code>, <code>module</code>, <code>interface</code>, <code>struct</code>, etc.</p>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:16px;">
+        Protocol interfaces (<code>DatabaseProvider</code>, <code>EmbeddingProvider</code>, <code>LLMProvider</code>, <code>LanguageParser</code>) use structural typing — any class with the right methods satisfies the protocol, enabling easy mocking in tests.
+      </div>
+    </div>
+
+    <!-- 7. INDEXING PIPELINE -->
+    <div class="section" id="indexing">
+      <h2><span class="num">07</span> Indexing Pipeline</h2>
+      <p>Entry point: <code class="path">services/indexing_coordinator.py</code> — <code>IndexingCoordinator.process_directory()</code></p>
+
+      <h3>5-phase pipeline</h3>
+      <pre><code>Phase 1: Discovery
+  Walk directory → detect language → filter .gitignore → return file list
+
+Phase 2: Parallel Parsing  (CPU-bound, ProcessPoolExecutor, 4–16 workers)
+  Each file → UniversalParser → ParseResult{chunks[]}
+  Chunk diffing: if file hash unchanged → skip reparse (10× speedup)
+
+Phase 3: Chunking — CAST Algorithm
+  tree-sitter generates AST → ChunkSplitter traverses tree
+  Extracts semantic units at natural boundaries (functions, classes, etc.)
+  Preserves hierarchy; smart line-range assignment
+
+Phase 4: Embedding Generation  (async, semaphore-limited)
+  Batch chunks by token count + provider limits
+  Check existing embeddings — skip unchanged chunks
+  Rate-limited API calls with concurrency cap
+
+Phase 5: Database Storage  (serial, single-thread executor)
+  Transaction batches of 5000 records
+  Insert: files → chunks → embeddings
+  Rebuild HNSW vector index if >50 new embeddings</code></pre>
+
+      <details>
+        <summary>Key optimization: chunk diffing</summary>
+        <div>
+          <p>Before re-parsing a file, the coordinator computes a hash of the file content and compares it to the stored hash. If unchanged, the entire parse/embed/store cycle is skipped for that file. This gives roughly a 10× speedup on incremental re-indexing of large repos.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Parallelism model</summary>
+        <div>
+          <p><strong>Parsing</strong> is CPU-bound → <code>ProcessPoolExecutor</code> with 4–16 workers (scales with file count).</p>
+          <p style="margin-top:8px;"><strong>Embedding</strong> is I/O-bound → <code>asyncio</code> with a semaphore limiting concurrent API batches (auto-detected per provider).</p>
+          <p style="margin-top:8px;"><strong>Database writes</strong> are serial → single <code>_db_thread</code> executor to avoid DuckDB connection conflicts.</p>
+        </div>
+      </details>
+    </div>
+
+    <!-- 8. SEARCH PIPELINE -->
+    <div class="section" id="search">
+      <h2><span class="num">08</span> Search Pipeline</h2>
+      <p>Entry point: <code class="path">services/search_service.py</code> — <code>SearchService.search_semantic()</code> or <code>.search_regex()</code></p>
+
+      <h3>Semantic search flow</h3>
+      <ol>
+        <li><strong>Embed query</strong> — call the configured embedding provider on the query string</li>
+        <li><strong>Strategy selection</strong> — single-hop (default) or multi-hop (when provider supports reranking)</li>
+        <li><strong>Vector search</strong> — HNSW cosine similarity (DuckDB) or IVF (LanceDB); returns top-K chunks</li>
+        <li><strong>Result enhancement</strong> — attach file paths, scores, surrounding context lines</li>
+        <li><strong>Return</strong> — ranked list of <code>Chunk</code>s with similarity scores</li>
+      </ol>
+
+      <h3>Multi-hop search (research mode)</h3>
+      <ol>
+        <li>Initial broad vector search</li>
+        <li>Expand from results (follow symbol references)</li>
+        <li>Rerank with VoyageAI rerank-2 model</li>
+        <li>Retrieve surrounding context (<code>ContextRetriever</code>)</li>
+      </ol>
+
+      <h3>Regex search (no embeddings needed)</h3>
+      <ul>
+        <li>LIKE-pattern match on chunk code text in the DB</li>
+        <li>Works fully offline — no API calls</li>
+        <li>Optional path filter, pagination supported</li>
+      </ul>
+
+      <div class="callout">
+        Regex search is the fastest way to verify your index is working. Run it first whenever debugging "zero results" issues.
+      </div>
+    </div>
+
+    <!-- 9. EMBEDDINGS -->
+    <div class="section" id="embeddings">
+      <h2><span class="num">09</span> Embedding System</h2>
+      <p>Managed by <code class="path">services/embedding_service.py</code> and <code class="path">embeddings.py</code> (EmbeddingManager).</p>
+
+      <table>
+        <tr>
+          <th>Provider</th><th>Models</th><th>Dims</th><th>Batch size</th><th>Concurrency</th><th>Extras</th>
+        </tr>
+        <tr>
+          <td>OpenAI</td>
+          <td><code>text-embedding-3-small</code><br><code>text-embedding-3-large</code></td>
+          <td>1536 / 3072</td>
+          <td>2000 texts</td>
+          <td>3 batches</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>VoyageAI</td>
+          <td><code>voyage-3</code></td>
+          <td>1024</td>
+          <td>128 texts</td>
+          <td>4 batches</td>
+          <td>Reranking (<code>rerank-2</code>)</td>
+        </tr>
+      </table>
+
+      <h3>Batching strategy</h3>
+      <ul>
+        <li>Split chunk list by token count (provider token limit)</li>
+        <li>Further split by batch size (e.g. 1000 texts per batch)</li>
+        <li>Concurrent async calls limited by semaphore (auto-detected per provider)</li>
+        <li>Check DB for existing embeddings before calling API — skip unchanged chunks</li>
+      </ul>
+
+      <div class="callout warn">
+        <strong>AGENTS.md rule:</strong> Always batch embeddings — minimum 100, maximum provider limit. Never make single-row DB inserts in loops.
+      </div>
+    </div>
+
+    <!-- 10. PARSERS -->
+    <div class="section" id="parsers">
+      <h2><span class="num">10</span> Language Parsers</h2>
+      <p>All parsers live in <code class="path">chunkhound/parsers/</code>. The primary parser is <strong>tree-sitter based</strong>, supporting 32 languages via a unified interface.</p>
+
+      <h3>Key components</h3>
+      <table>
+        <tr><th>File</th><th>Role</th></tr>
+        <tr><td><code>universal_parser.py</code></td><td>Main parser interface — dispatches to tree-sitter engine per language</td></tr>
+        <tr><td><code>universal_engine.py</code></td><td>Tree traversal engine — walks AST nodes</td></tr>
+        <tr><td><code>chunk_splitter.py</code></td><td><strong>CAST algorithm</strong> — codepoint-aware semantic tree chunking</td></tr>
+        <tr><td><code>parser_factory.py</code></td><td>Factory — instantiates correct parser for a language; lazy-loaded</td></tr>
+        <tr><td><code>mappings/</code></td><td>Language-specific AST node type → ChunkType mappings</td></tr>
+        <tr><td><code>rapid_yaml_parser.py</code></td><td>Custom YAML parser (tree-sitter insufficient for structured YAML)</td></tr>
+        <tr><td><code>vue_parser.py</code>, <code>svelte_parser.py</code></td><td>Web component parsers (multi-language files)</td></tr>
+        <tr><td><code>makefile_parser.py</code></td><td>Custom domain-specific parser</td></tr>
+      </table>
+
+      <h3>CAST algorithm — what makes it special</h3>
+      <ul>
+        <li>Operates on the <em>syntax tree</em>, not line counts</li>
+        <li>Respects language-specific semantic boundaries (function body, class block, etc.)</li>
+        <li>Preserves hierarchy — nested classes/functions get separate chunks</li>
+        <li>Codepoint-aware: handles multi-byte Unicode correctly in line ranges</li>
+        <li>Output: chunks that are meaningful to both LLMs and vector search</li>
+      </ul>
+
+      <h3>Language support</h3>
+      <p>Python, TypeScript, JavaScript, Rust, Go, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Haskell, Elixir, Erlang, Dart, R, Julia, Lua, Zig, YAML, JSON, TOML, Markdown, SQL, HTML, CSS, Vue, Svelte, Makefile — plus <code>UNKNOWN</code> fallback (plain text)</p>
+    </div>
+
+    <!-- 11. DATABASE -->
+    <div class="section" id="database">
+      <h2><span class="num">11</span> Database Layer</h2>
+      <p>Two backends are supported. DuckDB is the default and primary target. All DB access goes through a serial executor wrapper — one thread, no connection conflicts.</p>
+
+      <div class="two-col">
+        <div class="mini-card">
+          <h4>DuckDB (primary)</h4>
+          <ul>
+            <li>Path: <code>.chunkhound/db/chunks.db</code></li>
+            <li>HNSW vector index via <code>vss</code> extension</li>
+            <li>WAL mode, 1 GB checkpoint limit</li>
+            <li>Provider: <code>providers/database/duckdb_provider.py</code></li>
+          </ul>
+        </div>
+        <div class="mini-card">
+          <h4>LanceDB (alternative)</h4>
+          <ul>
+            <li>Path: <code>.chunkhound/db/lancedb.lancedb/</code> (directory)</li>
+            <li>IVF index for vector search</li>
+            <li>Better for very large indexes</li>
+            <li>Provider: <code>providers/database/lancedb_provider.py</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>Repository layer (DuckDB)</h3>
+      <table>
+        <tr><th>Class</th><th>File</th><th>Responsibility</th></tr>
+        <tr><td><code>DuckDBFileRepository</code></td><td><code>duckdb/file_repository.py</code></td><td>File CRUD, change detection via <code>content_hash</code></td></tr>
+        <tr><td><code>DuckDBChunkRepository</code></td><td><code>duckdb/chunk_repository.py</code></td><td>Chunk CRUD, line-range overlap queries, text LIKE search</td></tr>
+        <tr><td><code>DuckDBEmbeddingRepository</code></td><td><code>duckdb/embedding_repository.py</code></td><td>Embedding CRUD, upsert by (chunk_id, provider, model), HNSW vector search</td></tr>
+        <tr><td><code>DuckDBConnectionManager</code></td><td><code>duckdb/connection_manager.py</code></td><td>Connection pooling, WAL validation + corruption recovery, extension loading</td></tr>
+      </table>
+
+      <h3>Serial execution — the critical pattern</h3>
+      <p><code class="path">providers/database/serial_database_provider.py</code> wraps any DB provider with a <strong>single-threaded executor</strong> (<code>ThreadPoolExecutor(max_workers=1)</code>). Every DB call is submitted as a future and awaited. This prevents DuckDB connection conflicts from concurrent async tasks.</p>
+
+      <div class="callout warn">
+        <strong>DB path gotcha:</strong> Always pass the <em>directory</em> to <code>--db</code>, not the file. <code>--db .chunkhound/db</code> is correct; <code>--db .chunkhound/db/chunks.db</code> creates a nested <code>chunks.db/chunks.db</code> directory and silently returns zero results.
+      </div>
+    </div>
+
+    <!-- 11b. SCHEMA -->
+    <div class="section" id="db-schema">
+      <h2><span class="num">11b</span> Database Schema</h2>
+      <p>ChunkHound uses four tables. The embedding table is created <strong>per vector dimension</strong> (e.g., <code>embeddings_1536</code>, <code>embeddings_1024</code>) so different models can coexist without schema changes.</p>
+
+      <details open>
+        <summary>schema_version — migration tracking</summary>
+        <pre><code>CREATE TABLE IF NOT EXISTS schema_version (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    description TEXT
+);</code></pre>
+      </details>
+
+      <details open>
+        <summary>files — source file metadata</summary>
+        <pre><code>CREATE SEQUENCE IF NOT EXISTS files_id_seq;
+
+CREATE TABLE IF NOT EXISTS files (
+    id           INTEGER PRIMARY KEY DEFAULT nextval('files_id_seq'),
+    path         TEXT UNIQUE NOT NULL,   -- relative path (the lookup key)
+    name         TEXT NOT NULL,
+    extension    TEXT,
+    size         INTEGER,
+    modified_time TIMESTAMP,
+    content_hash TEXT,                   -- used for change detection / chunk diffing
+    language     TEXT,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_files_path     ON files(path);
+CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);</code></pre>
+      </details>
+
+      <details open>
+        <summary>chunks — semantic code units</summary>
+        <pre><code>CREATE SEQUENCE IF NOT EXISTS chunks_id_seq;
+
+CREATE TABLE IF NOT EXISTS chunks (
+    id          INTEGER PRIMARY KEY DEFAULT nextval('chunks_id_seq'),
+    file_id     INTEGER REFERENCES files(id),   -- FK to files table
+    chunk_type  TEXT NOT NULL,                  -- ChunkType enum value
+    symbol      TEXT,                           -- function/class name
+    code        TEXT NOT NULL,                  -- raw source text
+    start_line  INTEGER,                        -- 1-based
+    end_line    INTEGER,                        -- 1-based, inclusive
+    start_byte  INTEGER,
+    end_byte    INTEGER,
+    language    TEXT,
+    metadata    TEXT,                           -- JSON serialized extras
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_type    ON chunks(chunk_type);
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol  ON chunks(symbol);</code></pre>
+      </details>
+
+      <details open>
+        <summary>embeddings_{dims} — per-dimension vector tables</summary>
+        <pre><code>-- Created dynamically; one table per (dims) value encountered.
+-- Example for 1536-dimensional OpenAI embeddings:
+
+CREATE SEQUENCE IF NOT EXISTS embeddings_id_seq;
+
+CREATE TABLE IF NOT EXISTS embeddings_1536 (
+    id         INTEGER PRIMARY KEY DEFAULT nextval('embeddings_id_seq'),
+    chunk_id   INTEGER NOT NULL,
+    provider   TEXT NOT NULL,          -- "openai", "voyageai"
+    model      TEXT NOT NULL,          -- "text-embedding-3-small"
+    embedding  FLOAT[1536],            -- the vector (typed array)
+    dims       INTEGER NOT NULL DEFAULT 1536,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Regular indexes
+CREATE INDEX IF NOT EXISTS idx_1536_chunk_id        ON embeddings_1536(chunk_id);
+CREATE INDEX IF NOT EXISTS idx_1536_provider_model  ON embeddings_1536(provider, model);
+
+-- Uniqueness: one embedding per (chunk, provider, model) — enables upsert semantics
+CREATE UNIQUE INDEX IF NOT EXISTS idx_1536_chunk_provider_model_unique
+    ON embeddings_1536(chunk_id, provider, model);
+
+-- HNSW vector index for ANN search (requires vss extension)
+SET hnsw_enable_experimental_persistence = true;
+CREATE INDEX IF NOT EXISTS idx_hnsw_1536
+    ON embeddings_1536
+    USING HNSW (embedding)
+    WITH (metric = 'cosine');
+
+-- Extension bootstrap (run once at startup)
+INSTALL vss;
+LOAD vss;</code></pre>
+        <div class="callout" style="margin:12px 0 0;">
+          <strong>Why per-dimension tables?</strong> DuckDB's <code>FLOAT[N]</code> type is fixed-width. A 1536-dim vector cannot be stored in the same column as a 1024-dim vector. Separate tables also allow different HNSW indexes per model family with no cross-contamination.
+        </div>
+      </details>
+
+      <h3>Entity-relationship overview</h3>
+      <pre><code>files (1) ──── (N) chunks (1) ──── (N) embeddings_{dims}
+  id ◄────────── file_id    id ◄──────── chunk_id</code></pre>
+    </div>
+
+    <!-- 11c. QUERIES -->
+    <div class="section" id="db-queries">
+      <h2><span class="num">11c</span> Main Queries</h2>
+
+      <details open>
+        <summary>Vector search — the core semantic query</summary>
+        <pre><code>-- Semantic nearest-neighbor search using HNSW cosine similarity.
+-- The ARRAY[...] literal is the embedded query vector.
+-- array_distance() with cosine returns 1 - similarity (lower = closer).
+
+SELECT
+    c.id        AS chunk_id,
+    c.file_id,
+    f.path      AS file_path,
+    c.symbol,
+    c.code,
+    c.start_line,
+    c.end_line,
+    c.chunk_type,
+    c.language,
+    1 - array_distance(e.embedding, ARRAY[...]:FLOAT[1536]) AS score
+FROM embeddings_1536 e
+JOIN chunks  c ON e.chunk_id = c.id
+JOIN files   f ON c.file_id  = f.id
+WHERE e.provider = ?
+  AND e.model    = ?
+ORDER BY array_distance(e.embedding, ARRAY[...]:FLOAT[1536])
+LIMIT ?;</code></pre>
+      </details>
+
+      <details>
+        <summary>Regex / text search — no embeddings required</summary>
+        <pre><code>-- Pattern search using SQL LIKE (works offline, no API calls).
+-- Path filter is optional.
+
+SELECT
+    c.id, c.file_id, f.path AS file_path,
+    c.symbol, c.code, c.start_line, c.end_line,
+    c.chunk_type, c.language
+FROM chunks c
+JOIN files f ON c.file_id = f.id
+WHERE c.code LIKE ?              -- e.g. '%def search%'
+  AND f.path LIKE ?              -- optional path filter
+ORDER BY f.path, c.start_line
+LIMIT ?
+OFFSET ?;</code></pre>
+      </details>
+
+      <details>
+        <summary>File CRUD — insert, get, update</summary>
+        <pre><code>-- Insert new file (returns generated id)
+INSERT INTO files (path, name, extension, size, modified_time, content_hash, language)
+VALUES (?, ?, ?, ?, to_timestamp(?), ?, ?)
+RETURNING id;
+
+-- Lookup by path (most common access pattern — called before every index)
+SELECT id, path, name, extension, size, modified_time, language, content_hash,
+       created_at, updated_at
+FROM files
+WHERE path = ?;
+
+-- Update after re-index (bump mtime + hash for change detection)
+UPDATE files
+SET    size          = ?,
+       modified_time = to_timestamp(?),
+       content_hash  = ?,
+       updated_at    = CURRENT_TIMESTAMP
+WHERE  id = ?;</code></pre>
+      </details>
+
+      <details>
+        <summary>Chunk queries — batch insert + range lookup</summary>
+        <pre><code>-- Bulk insert (batches of up to 1000 rows per statement)
+INSERT INTO chunks (file_id, chunk_type, symbol, code,
+                   start_line, end_line, start_byte, end_byte, language, metadata)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+       ...
+RETURNING id;
+
+-- Get all chunks for a file (used for chunk diffing before re-index)
+SELECT id, file_id, chunk_type, symbol, code,
+       start_line, end_line, start_byte, end_byte, language, metadata
+FROM chunks
+WHERE file_id = ?
+ORDER BY start_line;
+
+-- Overlap query — find chunks touching a line range
+SELECT id, file_id, chunk_type, symbol, code, start_line, end_line, language
+FROM chunks
+WHERE file_id = ?
+  AND (
+      (start_line BETWEEN ? AND ?) OR
+      (end_line   BETWEEN ? AND ?) OR
+      (start_line &lt;= ? AND end_line &gt;= ?)   -- chunk spans the entire range
+  )
+ORDER BY start_line;</code></pre>
+      </details>
+
+      <details>
+        <summary>Embedding upsert + existence check</summary>
+        <pre><code>-- Upsert: insert or update if (chunk_id, provider, model) already exists
+INSERT INTO embeddings_1536 (chunk_id, provider, model, embedding, dims)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (chunk_id, provider, model) DO UPDATE
+SET embedding = EXCLUDED.embedding,
+    dims      = EXCLUDED.dims;
+
+-- Bulk existence check before calling the embedding API
+-- (avoids re-embedding chunks that already have vectors)
+SELECT DISTINCT chunk_id
+FROM embeddings_1536
+WHERE chunk_id IN (?, ?, ?, ...)
+  AND provider = ?
+  AND model    = ?;</code></pre>
+      </details>
+
+      <details>
+        <summary>Cascade delete — remove a file and all its data</summary>
+        <pre><code>-- Step 1: delete embeddings for all chunks belonging to the file
+DELETE FROM embeddings_1536
+WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id = ?);
+
+-- Step 2: delete the chunks
+DELETE FROM chunks WHERE file_id = ?;
+
+-- Step 3: delete the file record
+DELETE FROM files WHERE id = ?;</code></pre>
+        <div class="callout warn" style="margin:12px 0 0;">
+          No foreign-key CASCADE is defined — the application performs manual three-step deletion to keep control over HNSW index safety.
+        </div>
+      </details>
+
+      <details>
+        <summary>HNSW index management — drop/recreate for bulk inserts</summary>
+        <pre><code>-- Drop HNSW index before a large bulk insert (10-20× faster)
+DROP INDEX IF EXISTS idx_hnsw_1536;
+
+-- ... bulk INSERT embeddings here ...
+
+-- Recreate HNSW after bulk insert
+SET hnsw_enable_experimental_persistence = true;
+CREATE INDEX idx_hnsw_1536
+    ON embeddings_1536
+    USING HNSW (embedding)
+    WITH (metric = 'cosine');
+
+-- Threshold: drop/recreate only when inserting > 50 embeddings.
+-- Below that threshold the overhead outweighs the gain.</code></pre>
+      </details>
+
+      <details>
+        <summary>Statistics &amp; introspection queries</summary>
+        <pre><code>-- Count all indexed entities
+SELECT COUNT(*) FROM files;
+SELECT COUNT(*) FROM chunks;
+SELECT COUNT(*) FROM embeddings_1536;
+
+-- Which embedding tables exist (introspect all dims in use)
+SELECT table_name
+FROM information_schema.tables
+WHERE table_name LIKE 'embeddings_%';
+
+-- List HNSW indexes
+SELECT index_name, table_name, sql
+FROM duckdb_indexes()
+WHERE table_name LIKE 'embeddings_%';
+
+-- Check schema version
+SELECT MAX(version) FROM schema_version;
+
+-- Chunk type distribution for a file
+SELECT chunk_type, COUNT(*) AS count
+FROM chunks
+WHERE file_id = ?
+GROUP BY chunk_type;</code></pre>
+      </details>
+
+      <h3>Query performance rules</h3>
+      <ul>
+        <li><strong>Vector search:</strong> always hits the HNSW index — O(log N) even at millions of rows</li>
+        <li><strong>File lookup by path:</strong> hits <code>idx_files_path</code> — effectively O(1)</li>
+        <li><strong>Chunk lookup by file:</strong> hits <code>idx_chunks_file_id</code> — O(chunks-per-file)</li>
+        <li><strong>Regex search:</strong> sequential scan on <code>chunks.code</code> — slow on large DBs; add <code>LIMIT</code></li>
+        <li><strong>Bulk inserts:</strong> always batch ≥100 rows; drop HNSW index first when inserting >50 embeddings</li>
+      </ul>
+    </div>
+
+    <!-- 12. MCP SERVER -->
+    <div class="section" id="mcp">
+      <h2><span class="num">12</span> MCP Server</h2>
+      <p>ChunkHound exposes its capabilities as MCP (Model Context Protocol) tools so AI assistants can call them programmatically.</p>
+
+      <h3>Two transport modes</h3>
+      <div class="two-col">
+        <div class="mini-card">
+          <h4>Stdio (<code>mcp_server/stdio.py</code>)</h4>
+          <ul>
+            <li>JSON-RPC over stdin/stdout</li>
+            <li><strong>NEVER use print()</strong> — breaks the protocol</li>
+            <li>All logging forced to CRITICAL level</li>
+            <li>Used by Claude Code, Cursor, Zed, VS Code MCP extensions</li>
+            <li>Start: <code>uv run chunkhound mcp</code></li>
+            <li><code>--read-only</code> flag: forces single-process stdio, sets <code>DatabaseConfig.read_only=True</code>. Env var: <code>CHUNKHOUND_DATABASE__READ_ONLY=true</code>. Use when the DB is managed by a separate indexer process and the MCP server should never write.</li>
+          </ul>
+        </div>
+        <div class="mini-card">
+          <h4>HTTP (<code>mcp_server/http_server.py</code>)</h4>
+          <ul>
+            <li>Starlette ASGI server</li>
+            <li>SSE (Server-Sent Events) for streaming</li>
+            <li>WebSocket support</li>
+            <li>Start: <code>uv run chunkhound mcp http --port 5173</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>MCP Tools — 4 tools registered</h3>
+      <table>
+        <tr><th>Tool name</th><th>Requires</th><th>What it does</th><th>Key parameters</th></tr>
+        <tr>
+          <td><code>search</code></td>
+          <td>embeddings (for semantic only)</td>
+          <td>Unified regex + semantic search. <code>type="regex"</code> runs LIKE pattern match; <code>type="semantic"</code> runs HNSW vector search via multi-hop. Returns <strong>lean markdown</strong> (e.g. <code>## filepath L10–L20 — symbol (92%)</code>) instead of raw JSON.</td>
+          <td><code>type</code>, <code>query</code>, <code>path</code>, <code>page_size</code>, <code>offset</code></td>
+        </tr>
+        <tr>
+          <td><code>code_research</code></td>
+          <td>embeddings + LLM + reranker</td>
+          <td>Deep BFS research — calls UnifiedSearch up to 4×, extracts symbols, runs regex augmentation, LLM synthesises a cited markdown report. The main entry point for architecture questions.</td>
+          <td><code>query</code>, <code>path</code></td>
+        </tr>
+        <tr>
+          <td><code>daemon_status</code></td>
+          <td>none</td>
+          <td>Reports daemon health: whether initial indexing has completed, scan progress, and realtime indexing state. Use to check if the index is query-ready.</td>
+          <td>(none)</td>
+        </tr>
+        <tr>
+          <td><code>websearch</code></td>
+          <td>internet access (DuckDuckGo)</td>
+          <td><strong>New.</strong> Searches the web via DuckDuckGo, fetches result pages, builds an in-memory ChunkHound index from the content, runs deep research against that index, and returns a synthesised markdown report. Brings web knowledge into MCP sessions without leaving the tool.</td>
+          <td><code>query</code>, <code>limit</code>, <code>path_filter</code></td>
+        </tr>
+      </table>
+
+      <div class="callout warn" style="margin-top:12px;">
+        <strong>Note:</strong> The original guide listed <code>index</code>, <code>get_indexed_files</code>, <code>get_stats</code>, and <code>research</code> as MCP tools — these do <strong>not exist</strong> in the current codebase. Indexing is triggered via the CLI (<code>chunkhound index</code>), not via MCP. The research tool is named <code>code_research</code>, not <code>research</code>.
+      </div>
+
+      <h3>Tool definition pattern</h3>
+      <p>Tools are declared in <code class="path">mcp_server/tools.py</code> using a <code>@register_tool()</code> decorator. JSON Schema is auto-generated from the Python function signature and docstring. The decorator registers each tool into a <code>TOOL_REGISTRY</code> dict — this is the single source of truth, no manual schema maintenance.</p>
+      <pre><code>@register_tool(
+    description=SEARCH_DESCRIPTION,
+    requires_embeddings=False,
+    name="search",
+)
+async def search_impl(
+    services: DatabaseServices,
+    embedding_manager: EmbeddingManager | None,
+    type: Literal["regex", "semantic"],
+    query: str,
+    path: str | None = None,
+    page_size: int = 10,
+    offset: int = 0,
+) -> SearchResponse: ...</code></pre>
+    </div>
+
+    <!-- 13. CLI -->
+    <div class="section" id="cli">
+      <h2><span class="num">13</span> CLI Interface</h2>
+      <p>Entry point: <code class="path">chunkhound/api/cli/main.py</code> — <code>async def async_main()</code></p>
+      <p>Argument parsing with dynamic subparser registration. Flow: config validation → setup wizard (interactive first-run) → command dispatch.</p>
+
+      <h3>Subcommands</h3>
+      <table>
+        <tr><th>Command</th><th>What it does</th><th>Key options</th></tr>
+        <tr>
+          <td><code>index</code></td>
+          <td>Index files / directories</td>
+          <td><code>--path</code>, <code>--db</code>, <code>--no-embeddings</code>, <code>--simulate</code></td>
+        </tr>
+        <tr>
+          <td><code>search</code></td>
+          <td>CLI search interface</td>
+          <td><code>--query</code>, <code>--limit</code>, <code>--semantic</code> / <code>--regex</code></td>
+        </tr>
+        <tr>
+          <td><code>mcp</code></td>
+          <td>Start MCP server</td>
+          <td>(default: stdio) or <code>http --port 5173</code></td>
+        </tr>
+        <tr>
+          <td><code>research</code></td>
+          <td>Multi-hop code research</td>
+          <td><code>--query</code>, time/result limits</td>
+        </tr>
+        <tr>
+          <td><code>map</code></td>
+          <td>Generate architecture documentation</td>
+          <td>Uses CodeMapper + HyDE prompting</td>
+        </tr>
+        <tr>
+          <td><code>autodoc</code></td>
+          <td>LLM-assisted codebase documentation</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code>calibrate</code></td>
+          <td>Tune embedding batch sizes and concurrency</td>
+          <td>—</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- 14. DESIGN PATTERNS -->
+    <div class="section" id="patterns">
+      <h2><span class="num">14</span> Design Patterns</h2>
+
+      <h3>Pattern 1 — Immutable domain models</h3>
+      <p><code>File</code>, <code>Chunk</code>, <code>Embedding</code> are <code>@dataclass(frozen=True)</code>. Validation in <code>__post_init__</code>. Safe to cache, share across threads, and use as dict keys.</p>
+
+      <h3>Pattern 2 — Protocol-based abstraction (structural typing)</h3>
+      <p><code>DatabaseProvider</code>, <code>EmbeddingProvider</code>, <code>LLMProvider</code>, <code>LanguageParser</code> are Python Protocols. Any class with matching methods satisfies the interface — no inheritance required. Enables easy test mocking.</p>
+
+      <h3>Pattern 3 — Serial database executor</h3>
+      <p><code>SerialDatabaseProvider</code> wraps any provider in a single <code>ThreadPoolExecutor(max_workers=1)</code>. All DB calls are submitted as futures and awaited. This prevents DuckDB connection conflicts from concurrent threads.</p>
+
+      <h3>Pattern 4 — Lazy language parser loading</h3>
+      <p><code>LazyLanguageParsers</code> in the registry instantiates parsers on first access and caches them. Reduces startup time — you don't pay the cost of loading a tree-sitter grammar for Ruby if you never index Ruby files.</p>
+
+      <h3>Pattern 5 — Chunk diffing</h3>
+      <p>Before reprocessing, the indexing coordinator hashes file content and compares to the stored hash. Unchanged files skip parse → embed → store entirely. ~10× speedup for incremental re-indexing.</p>
+
+      <h3>Pattern 6 — Process pool for CPU-bound, async for I/O-bound</h3>
+      <p>Parsing uses <code>ProcessPoolExecutor</code> (true parallelism, bypasses GIL). Embedding API calls use <code>asyncio</code> with semaphore-limited concurrency. DB writes use a serial executor. Each bottleneck gets the right model.</p>
+
+      <h3>Pattern 7 — Declarative MCP tools</h3>
+      <p>Tool definitions in <code>tools.py</code> generate JSON Schema automatically from Python type hints. No manual schema maintenance. One function signature = one MCP tool definition.</p>
+
+      <h3>Pattern 8 — Configuration as Pydantic models</h3>
+      <p>All config structures are <code>BaseModel</code> subclasses. Multiple sources (CLI args, JSON files, env vars) merged in precedence order by the config loader. Invalid configs raise on startup, not at runtime.</p>
+    </div>
+
+    <!-- 15. PROVIDERS -->
+    <div class="section" id="providers">
+      <h2><span class="num">15</span> Provider Architecture</h2>
+      <p>All external backends are swappable. The same service layer works with any provider that satisfies the Protocol.</p>
+
+      <details open>
+        <summary>Database providers</summary>
+        <div>
+          <ul>
+            <li><code class="path">providers/database/duckdb_provider.py</code> — primary, HNSW index</li>
+            <li><code class="path">providers/database/lancedb_provider.py</code> — alternative, IVF index</li>
+            <li><code class="path">providers/database/serial_database_provider.py</code> — thread-safety wrapper (always in use)</li>
+            <li><code class="path">providers/database/duckdb/</code> — sub-repositories (file, chunk, embedding)</li>
+          </ul>
+        </div>
+      </details>
+
+      <details>
+        <summary>Embedding providers</summary>
+        <div>
+          <ul>
+            <li><code class="path">providers/embeddings/openai_provider.py</code> — OpenAI text-embedding-3 family</li>
+            <li><code class="path">providers/embeddings/voyageai_provider.py</code> — VoyageAI voyage-3 + reranking</li>
+          </ul>
+        </div>
+      </details>
+
+      <details>
+        <summary>LLM providers (for research / autodoc / map features)</summary>
+        <div>
+          <ul>
+            <li><code class="path">providers/llm/anthropic_llm_provider.py</code> — Anthropic Claude API</li>
+            <li><code class="path">providers/llm/openai_llm_provider.py</code> — OpenAI GPT</li>
+            <li><code class="path">providers/llm/gemini_llm_provider.py</code> — Google Gemini</li>
+            <li><code class="path">providers/llm/codex_cli_provider.py</code> — Codex CLI (local, no API key)</li>
+            <li><code class="path">providers/llm/claude_code_cli_provider.py</code> — Claude Code CLI (local, no API key)</li>
+          </ul>
+        </div>
+      </details>
+    </div>
+
+    <!-- 16. REGISTRY -->
+    <div class="section" id="registry">
+      <h2><span class="num">16</span> Registry &amp; Dependency Injection</h2>
+      <p>File: <code class="path">chunkhound/registry/__init__.py</code> — <code>ProviderRegistry</code></p>
+      <p>The registry is the <strong>composition root</strong> — it wires all providers, services, and parsers together. It is instantiated once per process and passed to services.</p>
+
+      <h3>What the registry manages</h3>
+      <ul>
+        <li>Database provider (creates and wraps in SerialDatabaseProvider)</li>
+        <li>Embedding provider (selected by config)</li>
+        <li>LLM provider (selected by config)</li>
+        <li>Language parsers (lazy-loaded, cached)</li>
+        <li>Service instances (IndexingCoordinator, SearchService, etc.)</li>
+      </ul>
+
+      <h3>Key methods</h3>
+      <pre><code>registry = ProviderRegistry(config)
+registry.configure()                     # init all providers
+provider = registry.get_provider()       # get DB provider
+coord = registry.create_indexing_coordinator()
+search = registry.create_search_service()</code></pre>
+
+      <p>The composition flow: <code>database_factory.py</code> → creates <code>ProviderRegistry</code> → registry creates all services → services injected into CLI commands or MCP handlers.</p>
+    </div>
+
+    <!-- 17. TESTING -->
+    <div class="section" id="testing">
+      <h2><span class="num">17</span> Testing Strategy</h2>
+
+      <div class="callout danger">
+        <strong>MANDATORY before any commit:</strong> <code>uv run pytest tests/test_smoke.py -v -n auto</code><br>
+        <strong>MANDATORY before any PR push:</strong> <code>uv run pytest tests/ -v</code>
+      </div>
+
+      <h3>Test layout</h3>
+      <table>
+        <tr><th>Directory / File</th><th>What it covers</th></tr>
+        <tr><td><code>tests/test_smoke.py</code></td><td><strong>Smoke tests</strong> — must pass before commits; fast, high-signal</td></tr>
+        <tr><td><code>tests/test_*.py</code> (root)</td><td>Unit tests for individual modules</td></tr>
+        <tr><td><code>tests/integration/</code></td><td>Integration tests — real DB, real providers</td></tr>
+        <tr><td><code>tests/e2e/</code></td><td>End-to-end — CLI commands against real files</td></tr>
+        <tr><td><code>tests/services/</code></td><td>Service layer tests</td></tr>
+        <tr><td><code>tests/cli/</code></td><td>CLI command tests</td></tr>
+        <tr><td><code>tests/fixtures/</code></td><td>Sample files: YAML, code snippets, etc.</td></tr>
+        <tr><td><code>tests/helpers/</code></td><td>Test utilities and fixtures</td></tr>
+        <tr><td><code>tests/conftest.py</code></td><td>Pytest fixtures: temp DBs, configs, mock providers</td></tr>
+      </table>
+
+      <h3>Test patterns</h3>
+      <ul>
+        <li><code>pytest-asyncio</code> for all async test functions</li>
+        <li>Mock embedding providers for offline testing (no API keys needed)</li>
+        <li>Temp DuckDB instances per test (via fixtures in conftest)</li>
+        <li>Smoke tests run in parallel (<code>-n auto</code> via pytest-xdist)</li>
+      </ul>
+    </div>
+
+    <!-- 18. COMMANDS -->
+    <div class="section" id="commands">
+      <h2><span class="num">18</span> Dev Commands Reference</h2>
+      <pre><code># ── Testing ──────────────────────────────────────────────────────
+uv run pytest tests/test_smoke.py -v -n auto   # MANDATORY before commits
+uv run pytest tests/ -v                         # MANDATORY before pushing PR
+
+# ── Code quality ─────────────────────────────────────────────────
+uv run ruff check chunkhound                    # lint
+uv run ruff format chunkhound                   # format
+uv run mypy chunkhound                          # type check
+
+# ── Running ───────────────────────────────────────────────────────
+uv run chunkhound index [directory]             # index a directory
+uv run chunkhound mcp                           # start MCP server (stdio)
+uv run chunkhound mcp http --port 5173          # start MCP server (HTTP)
+uv run chunkhound search "query" /path/to/repo  # search
+
+# ── Version management ────────────────────────────────────────────
+uv run scripts/update_version.py 4.1.0          # set exact version
+uv run scripts/update_version.py --bump minor   # bump minor version
+uv run scripts/update_version.py 4.1.0b1        # pre-release
+
+# ── All Python ops use uv (never pip, python, or poetry) ─────────</code></pre>
+    </div>
+
+    <!-- 19. GOTCHAS -->
+    <div class="section" id="gotchas">
+      <h2><span class="num">19</span> Gotchas &amp; Hard Rules</h2>
+
+      <div class="callout danger" style="margin-bottom:12px;">
+        <strong>NEVER</strong> use <code>print()</code> in <code>stdio.py</code>, <code>http_server.py</code>, or <code>tools.py</code> — it corrupts the MCP JSON-RPC stream.
+      </div>
+      <div class="callout danger" style="margin-bottom:12px;">
+        <strong>NEVER</strong> make single-row DB inserts in loops — always batch (min 100, max provider limit).
+      </div>
+      <div class="callout danger" style="margin-bottom:12px;">
+        <strong>NEVER</strong> edit version strings manually — always use <code>uv run scripts/update_version.py</code> to create git tags.
+      </div>
+      <div class="callout warn" style="margin-bottom:12px;">
+        <strong>DB path:</strong> Pass the <em>directory</em> to <code>--db</code>, not the <code>.db</code> file. Wrong path → silent zero results, no error.
+      </div>
+      <div class="callout warn" style="margin-bottom:12px;">
+        <strong>Forward references:</strong> Avoid quoted type annotations (<code>"MyClass"</code>) unless genuinely needed for circular imports.
+      </div>
+      <div class="callout" style="margin-bottom:12px;">
+        <strong>uv everywhere:</strong> All Python operations must use <code>uv run</code>, <code>uv add</code>, etc. Never use bare <code>pip</code> or <code>python</code>.
+      </div>
+      <div class="callout">
+        <strong>Preferred DB resolution:</strong> Pass the project directory as a positional arg (<code>chunkhound search "query" /path/to/project</code>) — this reads <code>.chunkhound.json</code> automatically. The <code>--db</code> flag is for edge cases.
+      </div>
+    </div>
+
+    <!-- 20. READING ORDER -->
+    <div class="section" id="reading-order">
+      <h2><span class="num">20</span> Recommended Reading Order</h2>
+      <p>If you're new to the codebase, read files in this order for the fastest mental model:</p>
+
+      <ol>
+        <li>
+          <strong>Domain models</strong> — understand the fundamental data structures<br>
+          <span class="path">chunkhound/core/models/file.py</span> &nbsp;
+          <span class="path">chunkhound/core/models/chunk.py</span> &nbsp;
+          <span class="path">chunkhound/core/models/embedding.py</span>
+        </li>
+        <li>
+          <strong>Type system</strong> — understand enums and aliases<br>
+          <span class="path">chunkhound/core/types/common.py</span>
+        </li>
+        <li>
+          <strong>Config</strong> — understand what's configurable<br>
+          <span class="path">chunkhound/core/config/config.py</span>
+        </li>
+        <li>
+          <strong>CLI entry point</strong> — understand the user-facing flow<br>
+          <span class="path">chunkhound/api/cli/main.py</span>
+        </li>
+        <li>
+          <strong>Indexing pipeline</strong> — the most complex service (3000+ lines)<br>
+          <span class="path">chunkhound/services/indexing_coordinator.py</span>
+        </li>
+        <li>
+          <strong>Search service</strong> — the core retrieval logic<br>
+          <span class="path">chunkhound/services/search_service.py</span>
+        </li>
+        <li>
+          <strong>DuckDB provider</strong> — how data is persisted and queried<br>
+          <span class="path">chunkhound/providers/database/duckdb_provider.py</span>
+        </li>
+        <li>
+          <strong>Registry</strong> — how everything is wired together<br>
+          <span class="path">chunkhound/registry/__init__.py</span>
+        </li>
+        <li>
+          <strong>MCP tools</strong> — what AI assistants actually call<br>
+          <span class="path">chunkhound/mcp_server/tools.py</span> &nbsp;
+          <span class="path">chunkhound/mcp_server/stdio.py</span>
+        </li>
+        <li>
+          <strong>Smoke tests</strong> — understand what must always work<br>
+          <span class="path">tests/test_smoke.py</span>
+        </li>
+      </ol>
+
+      <div class="callout" style="margin-top:20px;">
+        After reading those 10 files you'll understand ~80% of what the codebase does day-to-day. The remaining 20% is specialized features: <code>research</code>, <code>code_mapper</code>, <code>autodoc</code>, <code>daemon</code>, and <code>watchman</code>.
+      </div>
+    </div>
+
+    <!-- 21. NEW FEATURES -->
+    <div class="section" id="new-features">
+      <h2><span class="num">21</span> New Features (Latest Release)</h2>
+      <p>56 commits landed on <code>main</code> since the initial guide was written. Here are the 7 most significant additions, with the key design decisions explained.</p>
+
+      <h3>1. DB Compaction</h3>
+      <p>Over time, deleted chunks leave gaps in the DuckDB file and the HNSW vector index. Compaction reclaims that space atomically so queries stay fast.</p>
+      <p><strong>Protocol:</strong> <em>HNSW Bookend</em> — drop the HNSW index before copying data, then rebuild it on the compacted DB. HNSW is an in-memory structure; it cannot be streamed across databases.</p>
+      <pre><code># Internal stages (chunkhound/providers/database/compaction/)
+_compact_prepare()   # create a fresh empty DB
+_compact_copy_data() # bulk INSERT … SELECT all live chunks/embeddings
+_compact_finalize()  # atomic rename: new DB replaces old DB
+_compact_restore()   # if anything fails, restore original
+
+had_hnsw = drop_hnsw_index()   # remember whether HNSW existed
+copy_data()                     # copy without HNSW
+if had_hnsw: rebuild_hnsw()    # rebuild on the compacted copy</code></pre>
+      <p>Fragmentation monitoring runs after every delete batch. A compaction is triggered automatically when fragmentation exceeds the configured threshold.</p>
+
+      <h3>2. Git-Diff Semantic Search</h3>
+      <p>ChunkHound can now <em>index and search git diffs</em> as semantic chunks, not just static source files.</p>
+      <ul>
+        <li>New module: <code class="path">chunkhound/core/git_diff/</code></li>
+        <li>New language constant: <code>Language.GIT_DIFF</code></li>
+        <li>New chunk type: <code>ChunkType.GIT_DIFF</code></li>
+        <li>Service: <code>DiffAwareSearchService</code> — wraps the existing search stack with diff-aware context injection</li>
+      </ul>
+      <p><strong>Three search modes:</strong></p>
+      <table>
+        <tr><th>Mode</th><th>What it searches</th></tr>
+        <tr><td><code>db</code></td><td>Only the indexed codebase (default, unchanged behaviour)</td></tr>
+        <tr><td><code>diff</code></td><td>Only the current <code>git diff</code> output</td></tr>
+        <tr><td><code>both</code></td><td>Merges results from the DB index and the live diff, reranked together</td></tr>
+      </table>
+      <p>Use case: "what did this PR change that relates to authentication?" — pass <code>mode=diff</code> and search the diff directly without re-indexing.</p>
+
+      <h3>3. Global Config File</h3>
+      <p>See the updated <a href="#config-system">Section 5 — Configuration System</a> above. Machine-wide defaults (API keys, default model) are now supported through a global config file at <code>~/.config/chunkhound/chunkhound.json</code>. This avoids repeating API key configuration in every project's <code>.chunkhound.json</code>.</p>
+
+      <h3>4. MCP <code>--read-only</code> Flag</h3>
+      <p>The MCP server now accepts <code>--read-only</code>, setting <code>DatabaseConfig.read_only = True</code>. When enabled:</p>
+      <ul>
+        <li>Forces single-process stdio mode (no background writer threads)</li>
+        <li>All DB write paths assert-fail, preventing accidental corruption</li>
+        <li>The daemon watcher is not started — saves memory in read-only deployments</li>
+        <li>Env var shorthand: <code>CHUNKHOUND_DATABASE__READ_ONLY=true</code></li>
+      </ul>
+      <p>Typical pattern: run <code>chunkhound index</code> as a CI step, then serve the frozen DB via MCP with <code>--read-only</code>.</p>
+
+      <h3>5. Rust-Native File Scanner (<code>chunkhound_native</code>)</h3>
+      <p>File discovery (walking the directory tree, applying <code>.gitignore</code> rules) was previously done in Python. It is now optionally offloaded to a Rust extension module for large repos.</p>
+      <ul>
+        <li>Extension: <code>chunkhound_native</code> (PyO3-based, installed as a wheel)</li>
+        <li>Source: <code class="path">chunkhound_native/</code> directory (Rust crate)</li>
+        <li>Uses the Rust <code>ignore</code> crate for parallel directory walking + full <code>.gitignore</code> semantics</li>
+        <li>Entry point: <code>scan_files(root: str, exclude_patterns: list[str]) → list[str]</code></li>
+        <li>The Python scanner remains as a fallback if the native extension is not installed</li>
+      </ul>
+      <p>On a 500k-file monorepo the native scanner is ~10× faster than <code>os.walk</code>.</p>
+
+      <h3>6. WebSearch MCP Tool</h3>
+      <p>See the updated <a href="#mcp">Section 12 — MCP Server</a>. The new <code>websearch</code> tool lets MCP clients search the web without leaving the tool interface:</p>
+      <ol>
+        <li>Query DuckDuckGo for URLs</li>
+        <li>Fetch and extract text from result pages</li>
+        <li>Build an in-memory ChunkHound index from the fetched content</li>
+        <li>Run the full <code>code_research</code> deep-research pipeline against that index</li>
+        <li>Return a synthesised markdown report with citations</li>
+      </ol>
+      <p>Parameters: <code>query</code> (required), <code>limit</code> (number of pages to fetch, default 5), <code>path_filter</code> (domain filter).</p>
+
+      <h3>7. Lean Markdown Search Responses</h3>
+      <p>The <code>search</code> MCP tool previously returned a JSON array of result objects. It now returns <strong>lean markdown</strong> formatted for token efficiency:</p>
+      <pre><code>## chunkhound/services/search/multi_hop_strategy.py L160–L220 — MultiHopStrategy.search (94%)
+
+```python
+all_results = list(initial_results)
+seen_chunk_ids = {result["chunk_id"] for result in initial_results}
+...
+```
+
+## chunkhound/providers/database/duckdb_provider.py L410–L450 — find_similar_chunks (87%)
+
+```python
+def find_similar_chunks(self, chunk_id: int, ...):
+...
+```</code></pre>
+      <p>Format: <code>## filepath L{start}–{end} — symbol (score%)</code> followed by a fenced code block. This reduces context usage when an AI assistant is scanning many results, since the structure is scannable without parsing JSON.</p>
+
+      <div class="callout" style="margin-top:16px;">
+        <strong>Summary of new entry points:</strong>
+        <code>chunkhound/core/git_diff/</code>,
+        <code>chunkhound_native/</code> (Rust),
+        <code>DatabaseConfig.read_only</code>,
+        <code>~/.config/chunkhound/chunkhound.json</code>,
+        <code>mcp_server/tools.py → websearch</code>
+      </div>
+    </div>
+
+    <footer>ChunkHound Developer Learning Guide &mdash; Generated 2026-07-05</footer>
+  </div>
+</div>
+
+</body>
+</html>

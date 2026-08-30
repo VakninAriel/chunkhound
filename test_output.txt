@@ -1,0 +1,20 @@
+   Building chunkhound @ file:///home/e119870/views/g/my_chunkhound
+      Built chunkhound @ file:///home/e119870/views/g/my_chunkhound
+Uninstalled 1 package in 1ms
+Installed 1 package in 2ms
+============================= test session starts ==============================
+platform linux -- Python 3.12.12, pytest-8.4.2, pluggy-1.6.0 -- /home/e119870/views/g/my_chunkhound/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/e119870/views/g/my_chunkhound
+configfile: pyproject.toml
+plugins: xdist-3.8.0, langsmith-0.4.32, timeout-2.4.0, rerunfailures-16.1, anyio-4.11.0, asyncio-1.2.0
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+tests/unit/test_compaction_service.py::TestHNSWIndexSurvival::test_hnsw_index_survives_export_import_cycle PASSED [ 50%]
+tests/unit/test_compaction_service.py::TestHNSWIndexSurvival::test_hnsw_index_survives_with_recreation PASSED [100%]
+
+============================== 2 passed in 4.02s ===============================

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound Analytics Reporting — Design Proposal</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 240px; min-width: 240px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+    #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+    #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #main { flex: 1; padding: 40px; max-width: 900px; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+    header h1 { font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+    .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 16px 0 8px; }
+    .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+    .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; background: #e6f0ff; color: #1e5cb3; margin-left: 8px; }
+    .badge.decision { background: #eafbea; color: #1c7c2c; }
+    .badge.nongoal { background: #fdecea; color: #b3261e; }
+    .badge.superseded { background: #f1f1f1; color: #666; text-decoration: line-through; }
+    .badge.researched { background: #e0f7f5; color: #0d6d63; }
+    .mermaid { background: #fff; padding: 16px; border-radius: 6px; margin: 12px 0; text-align: center; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+    .history { background: #fafafa; border: 1px dashed #ccc; border-radius: 6px; padding: 16px; margin: 12px 0; font-size: 13px; color: #666; }
+  </style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#context">Context</a>
+  <a href="#history">Design History</a>
+  <a href="#decisions">Key Design Decisions</a>
+  <a href="#diagrams">Architecture &amp; Flow</a>
+  <a href="#duckdb">DuckDB Query Layer</a>
+  <a href="#viewer">Viewer Evaluation</a>
+  <a href="#access-control">Access Control</a>
+  <a href="#reliability">Reliability</a>
+  <a href="#config">Configuration &amp; Deployment</a>
+  <a href="#retention">Retention &amp; Lifecycle</a>
+  <a href="#non-goals">Non-Goals</a>
+  <a href="#verification">Verification</a>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>ChunkHound Analytics Reporting — Design Proposal</h1>
+    <div class="meta">Companion to ALGINF-5738 (client-side design) | Target: PDC — self-hosted MinIO (S3-compatible) | Generated: 2026-08-16 (rev. 4 — access control, read-only credential, retention) | Status: Pending Approval</div>
+  </header>
+  <div id="main">
+
+    <div class="section" id="context">
+      <h2>Context</h2>
+      <p>
+        The <a href="chunkhound_per_user_analytics_design_report.html">ALGINF-5738 client-side design</a> defines a store-and-forward analytics pipeline in ChunkHound: usage events buffered locally, then uploaded as unique JSONL objects directly to an S3-compatible bucket (self-hosted MinIO on PDC). There is no central ingestion server — the bucket <em>is</em> the receiving side. This design covers only the <strong>reporting/viewer</strong> layer: how to turn those many small JSONL objects into usable dashboards.
+      </p>
+      <p style="margin-top:10px;">
+        <strong>Recommendation: DuckDB (query engine, reading S3 directly via <code>httpfs</code>) + Metabase (dashboard/BI layer, via its community DuckDB driver).</strong> Both are free, self-hostable, and require no data movement — DuckDB queries the JSONL objects in place.
+      </p>
+      <p style="margin-top:10px;">
+        As of ALGINF-5738 rev. 3, each object contains one <code>command_summary</code> event per MCP tool call or CLI command — a single record per invocation with a nested <code>providers</code> breakdown (LLM/embedding/reranker calls and tokens by provider+model) rather than several flat event types. This affects query shape (see DuckDB Query Layer below) but not the architecture here — DuckDB + Metabase over S3 stays the same regardless of the exact event schema.
+      </p>
+    </div>
+
+    <div class="section" id="history">
+      <h2>Design History</h2>
+      <p>This is the third iteration of the server/reporting-side design — kept here rather than deleted, per the project's knowledge-preservation practice, since each prior decision was a real, reasoned step:</p>
+      <ol>
+        <li><span class="badge superseded">superseded</span> <strong>Rev. 1 — pluggable Elasticsearch/Loki ingestion server.</strong> Built for a case where the backend platform wasn't yet decided; dropped once a concrete backend was confirmed.</li>
+        <li><span class="badge superseded">superseded</span> <strong>Rev. 2 — Prometheus + Grafana ingestion server.</strong> Confirmed backend (algo-infra-01), modeled on the <code>bf_monitoring</code> (bifrost) precedent: pull-based scrape, `prometheus_client` in-memory registry, `ServiceMonitor` CRD, Grafana dashboard-as-code. Fully designed, including a documented Scaling Limits analysis (confirmed sufficient for Phase 1 at ≤50 users).</li>
+        <li><span class="badge superseded">superseded</span> <strong>Rev. 3 — direct-to-S3, reporting/viewer layer only.</strong> Superseded Rev. 2 once the decision was made to have clients write directly to an S3-compatible bucket instead of pushing to any server — this removes the ingestion server concept entirely. Established the DuckDB + Metabase architecture, but left access control, the reporting layer's own credential, and retention undefined.</li>
+        <li><span class="badge decision">current</span> <strong>Rev. 4 — implementation-readiness pass, this document.</strong> Closes the three gaps left open by rev. 3: who can access Metabase and how they authenticate (<a href="#access-control">Access Control</a>), a read-only credential for the reporting layer distinct from the client's write-only credential (<a href="#config">Configuration &amp; Deployment</a>), and an explicit retention/lifecycle decision instead of an open non-goal (<a href="#retention">Retention &amp; Lifecycle</a>). No architectural changes from rev. 3 — same DuckDB + Metabase, direct-to-S3 design.</li>
+      </ol>
+    </div>
+
+    <div class="section" id="decisions">
+      <h2>Key Design Decisions</h2>
+      <ul>
+        <li><strong>No ingestion server</strong> <span class="badge decision">decided</span> — ChunkHound clients write directly to the bucket (per ALGINF-5738). Nothing to build or operate on a receiving side.</li>
+        <li><strong>Query engine</strong> <span class="badge decision">decided</span> — DuckDB with the `httpfs` extension, configured against the MinIO endpoint, running `read_json_auto('s3://bucket/analytics/**/*.jsonl')` glob queries directly over the objects. Zero ETL; DuckDB is already core to ChunkHound itself, and its S3-compatible-endpoint support (custom `s3_endpoint`, `s3_url_style='path'`) is mature and explicitly tested against MinIO. <span class="badge researched">researched Aug 2026</span></li>
+        <li><strong>BI/dashboard layer</strong> <span class="badge decision">decided</span> — Metabase, via the actively-maintained community `metabase_duckdb_driver`, pointed at the DuckDB-over-S3 setup. Redash is the documented fallback (DuckDB is a first-class Redash source, slightly less full-featured dashboards/alerting) if Metabase's community driver ever becomes a blocker. <span class="badge researched">researched Aug 2026</span></li>
+        <li><strong>Deployment</strong> <span class="badge decision">decided</span> — Metabase self-hosted on PDC via Docker/Helm, matching established conventions. No custom application code to write at all for the reporting side — this is entirely off-the-shelf tooling configuration.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="diagrams">
+      <h2>Architecture &amp; Flow</h2>
+      <div class="mermaid">
+graph TB
+    subgraph ChunkHound Clients
+        C1["ChunkHound instance A"]
+        C2["ChunkHound instance B"]
+    end
+
+    S3[("S3-compatible bucket<br/>MinIO on PDC<br/>analytics/&lt;repo&gt;/&lt;user&gt;/.../*.jsonl")]
+
+    subgraph "Reporting layer (PDC)"
+        DUCK["DuckDB<br/>httpfs extension<br/>read_json_auto(s3://bucket/analytics/**/*.jsonl)"]
+        MB["Metabase<br/>metabase_duckdb_driver"]
+    end
+
+    U["Analyst / engineering lead"]
+
+    C1 -- "PutObject (unique key)" --> S3
+    C2 -- "PutObject (unique key)" --> S3
+    DUCK -- "glob-scans on query" --> S3
+    MB -- "SQL via DuckDB driver" --> DUCK
+    U -- "views dashboards" --> MB
+      </div>
+    </div>
+
+    <div class="section" id="duckdb">
+      <h2>DuckDB Query Layer</h2>
+      <p>DuckDB's `httpfs` extension is explicitly tested against AWS S3, MinIO, GCS, and lakeFS. Custom endpoints are first-class:</p>
+      <pre><code>INSTALL httpfs; LOAD httpfs;
+SET s3_endpoint='&lt;minio-host&gt;:&lt;port&gt;';
+SET s3_url_style='path';
+SET s3_use_ssl=false;      -- if MinIO is running without TLS internally
+SET s3_access_key_id='...';
+SET s3_secret_access_key='...';
+
+SELECT * FROM read_json_auto('s3://&lt;bucket&gt;/analytics/**/*.jsonl');</code></pre>
+      <p style="margin-top:10px;">Because the object key already encodes `repository`/`user`/date, queries can prune by path glob (e.g. `analytics/chunkhound/**/2026/08/**/*.jsonl`) as well as by the `repository`/`user`/`command` fields inside each JSON line — no separate index or catalog needed. DuckDB itself already ships inside ChunkHound, so this reuses in-house expertise rather than introducing a new query technology.</p>
+      <p style="margin-top:10px;"><strong>Querying the nested <code>providers</code> rollup:</strong> since ALGINF-5738 rev. 3 nests LLM/embedding/reranker activity as arrays-of-objects per event (<code>providers.llm[]</code>, <code>providers.embedding[]</code>, <code>providers.reranker[]</code>), per-provider/model breakdowns need <code>UNNEST</code>:</p>
+      <pre><code>SELECT repository, command,
+       p.provider, p.model, SUM(p.calls) AS calls,
+       SUM(p.input_tokens) AS input_tokens, SUM(p.output_tokens) AS output_tokens
+FROM read_json_auto('s3://&lt;bucket&gt;/analytics/**/*.jsonl'),
+     UNNEST(providers.llm) AS p
+GROUP BY repository, command, p.provider, p.model;</code></pre>
+      <p style="margin-top:10px;">Command-level rollups (e.g. calls per command per repository) don't need <code>UNNEST</code> at all — they read directly off the top-level fields.</p>
+    </div>
+
+    <div class="section" id="viewer">
+      <h2>Viewer Evaluation <span class="badge researched">researched Aug 2026</span></h2>
+      <table>
+        <tr><th>Option</th><th>S3/MinIO support via DuckDB</th><th>Verdict</th></tr>
+        <tr><td><strong>Metabase</strong> (chosen)</td><td>Community driver (`motherduckdb/metabase_duckdb_driver`), actively maintained; `httpfs` loaded via an `init.sql` at driver startup.</td><td>Best balance of dashboard/alerting features and setup simplicity.</td></tr>
+        <tr><td>Redash (fallback)</td><td>DuckDB is a first-class Redash source; same `httpfs` setup applies.</td><td>Simpler to stand up, somewhat less full-featured for dashboards/alerting than Metabase.</td></tr>
+        <tr><td>Apache Superset</td><td>Works via the `duckdb-engine` SQLAlchemy driver, but S3/`httpfs` extension config isn't a first-class documented feature — requires manual extension-preload wiring (custom Docker image, SQL Lab "Advanced" settings).</td><td>Viable but more DIY than Metabase/Redash for this exact use case.</td></tr>
+        <tr><td>Grafana + Infinity datasource</td><td>Purpose-built for reading JSON from S3/MinIO directly (confirmed working via SigV4 auth against a custom endpoint) — skips DuckDB entirely.</td><td>Simpler for lightweight panels, but weaker for cross-file aggregation across many small JSONL objects than a real SQL engine.</td></tr>
+      </table>
+    </div>
+
+    <div class="section" id="access-control">
+      <h2>Access Control <span class="badge new">new in rev. 4</span></h2>
+      <p>
+        Rev. 3 left "who can see the dashboards, and how do they log in" undefined. The original intent was to follow the same precedent as the dropped Rev. 2 (Grafana on <code>algo-infra-01</code>, modeled on <code>bf_monitoring</code>): PDC-hosted internal tools authenticate via the existing PDC SSO/OIDC identity provider rather than standing up local accounts. That runs into a real licensing gap, below, so Phase 1 falls back to local accounts instead.
+      </p>
+
+      <h3>SSO licensing gap <span class="badge researched">researched Aug 2026</span></h3>
+      <p>
+        Metabase's SAML and JWT SSO integrations — the mechanisms that would federate against PDC's SSO/OIDC identity provider — are <strong>Metabase Pro/Enterprise features, not available in the free open-source edition</strong> this design otherwise relies on for everything else (see Viewer Evaluation above). Open-source Metabase's only built-in SSO options are Google Sign-In (OAuth) and LDAP bind. Neither is confirmed available against PDC's identity provider yet, and an Enterprise license is a separate procurement/budget decision outside this design's scope — so SSO is deferred rather than blocking the rest of the rollout on it.
+      </p>
+
+      <h3>Phase 1 — local accounts, no SSO <span class="badge decision">decided</span></h3>
+      <ul>
+        <li><strong>Authentication</strong> <span class="badge decision">decided</span> — Metabase's built-in local account system (email + password), no SSO. Exactly two accounts are provisioned: one <strong>admin</strong> account (deploys/maintains the instance, configures the DuckDB connection, full edit rights) and one shared <strong>viewer</strong> account (view-only), handed to whoever needs to see the dashboards — engineering leads and the requester, Nir S., for now.</li>
+        <li><strong>Why a shared viewer account instead of per-person accounts</strong> <span class="badge decision">decided</span> — with only local auth and no SSO, provisioning/deprovisioning individual Metabase accounts by hand doesn't scale and isn't worth automating for Phase 1's small audience; a single shared viewer login is simplest and matches the "one shared credential" pattern already used elsewhere in this design (the client's write credential, Metabase's own read-only S3 credential).</li>
+        <li><strong>Authorization</strong> <span class="badge decision">decided</span> — the admin account has full edit/admin rights; the viewer account has view-only permission on a single Collection containing the analytics dashboards, with no query/SQL access and no visibility into the underlying DuckDB connection settings or credentials.</li>
+      </ul>
+
+      <h3>Future — SSO once unblocked <span class="badge nongoal">deferred</span></h3>
+      <p>
+        Once PDC confirms LDAP bind availability, Google Workspace-backed accounts, or an Enterprise license is approved, the original intent — SSO against PDC's identity provider, per-person accounts, a real read-only viewer group — should replace the Phase 1 shared-account approach above. Tracked as a follow-up, not solved by this revision.
+      </p>
+
+      <p style="margin-top:10px;"><strong>Why not per-repository/per-team scoping</strong> <span class="badge nongoal">non-goal</span> — independent of the SSO question, Phase 1 has one shared viewer scope for all analytics dashboards, matching the client-side design's Phase 1 decision to use one shared write credential rather than per-team scoping. Finer-grained scoping (e.g. a team only seeing its own repositories' data) is deferred until there's real demand for it.</p>
+    </div>
+
+    <div class="section" id="reliability">
+      <h2>Reliability</h2>
+      <ul>
+        <li>There is no ingestion path to fail — clients write directly to the bucket and retry on failure per the client-side design; the reporting layer is purely read-only against whatever objects already exist.</li>
+        <li>DuckDB re-scans the bucket per query (or per Metabase-scheduled refresh) — there's no persistent index to go stale or need rebuilding. A slow/unavailable MinIO endpoint simply makes the next dashboard refresh slow or fail; it doesn't corrupt or lose any client-side data.</li>
+        <li>As object count grows, glob-scan cost grows with it — the object-key partitioning by repository/user/date (from the client-side design) lets queries narrow the scan via path prefixes instead of listing the entire bucket, keeping this manageable well beyond Phase 1 volumes.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="config">
+      <h2>Configuration &amp; Deployment</h2>
+      <p>Entirely off-the-shelf: a Metabase container (official image + the `metabase_duckdb_driver` JAR in its `plugins/` directory) deployed via Helm to a PDC namespace, with an `init.sql` loading `httpfs` and setting the MinIO endpoint/credentials at driver startup. No custom application code, no new repository needed for this side of the design (contrast with the dropped Rev. 2, which required a bespoke FastAPI service, Helm chart, and `ServiceMonitor`).</p>
+
+      <h3>Read-only credential scheme <span class="badge new">new in rev. 4</span></h3>
+      <p>
+        The client-side design (ALGINF-5738) uses one shared, <strong>write-only</strong> credential distributed to every ChunkHound install via environment variable. That credential must not be reused here — a write-only credential typically can't read, and even if it could, reusing a broadly-distributed developer-facing credential for the reporting layer would mean every developer's machine effectively also holds read access to every other user's analytics data.
+      </p>
+      <table>
+        <tr><th></th><th>Client credential (ALGINF-5738)</th><th>Metabase credential (this doc)</th></tr>
+        <tr><td>Scope</td><td>Write-only (<code>PutObject</code>) on <code>analytics/</code></td><td>Read-only (<code>GetObject</code>, <code>ListBucket</code>) on <code>analytics/</code></td></tr>
+        <tr><td>Distribution</td><td>Shared across every ChunkHound install, via env var on developer machines</td><td>Single copy, held only by the Metabase deployment</td></tr>
+        <tr><td>Storage</td><td>Developer's local environment</td><td>Kubernetes <code>Secret</code> in Metabase's own PDC namespace, mounted into the container (or injected via the <code>init.sql</code> startup step) — never checked into Helm values or committed anywhere</td></tr>
+      </table>
+      <p style="margin-top:10px;">Because MinIO issues independent access keys per policy, this is a new key with a read-only bucket policy, generated separately from the client-side write-only key — not a scoped-down copy of it.</p>
+    </div>
+
+    <div class="section" id="retention">
+      <h2>Retention &amp; Lifecycle <span class="badge new">new in rev. 4</span></h2>
+      <p>
+        Rev. 3 left this as an open non-goal. Given the object key already partitions by <code>repository</code>/<code>user</code>/date (from the client-side design), a bucket-native lifecycle rule is sufficient — no application code or DuckDB/Metabase change needed.
+      </p>
+      <ul>
+        <li><strong>Decision</strong> <span class="badge decision">decided</span> — a MinIO bucket lifecycle rule expires objects under the <code>analytics/</code> prefix after <strong>180 days</strong>. Chosen as a starting point that comfortably covers quarter-over-quarter usage trend analysis without keeping per-user activity indefinitely; this is a bucket-admin config value, not code, and can be revisited without a design change.</li>
+        <li><strong>Why not shorter</strong> — Metabase dashboards are expected to answer questions like "usage trend this quarter vs last," which needs at least ~2 quarters of history online at once.</li>
+        <li><strong>Why not longer / indefinite</strong> — per-user activity data has a real privacy cost to retaining (see the <code>privacy_mode</code> discussion in ALGINF-5738); an explicit expiry bounds that exposure instead of accumulating it forever by default.</li>
+        <li><strong>Ownership</strong> — configuring the lifecycle rule is a one-time MinIO administration task on the same bucket used by the client-side design, done alongside the rest of the deployment in <a href="#config">Configuration &amp; Deployment</a>; it is not something ChunkHound or Metabase enforce in code.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="non-goals">
+      <h2>Non-Goals</h2>
+      <ul>
+        <li><span class="badge nongoal">out of scope</span> No custom ingestion service of any kind — superseded entirely by direct-to-S3 client writes.</li>
+        <li><span class="badge nongoal">out of scope</span> No dollar-cost computation — consistent with ALGINF-5738; token/request counts are queryable as-is, cost conversion is a downstream SQL/dashboard calculation if ever needed.</li>
+        <li><span class="badge nongoal">out of scope</span> No data warehouse / ETL pipeline — DuckDB queries the raw JSONL objects in place; no transformation or loading step.</li>
+        <li><span class="badge nongoal">out of scope</span> No per-repository/per-team scoping of Metabase view access in Phase 1 — see <a href="#access-control">Access Control</a>.</li>
+        <li><span class="badge superseded">superseded (rev. 4)</span> No long-term retention policy defined here — resolved; see <a href="#retention">Retention &amp; Lifecycle</a>.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="verification">
+      <h2>Verification</h2>
+      <ol>
+        <li>Stand up a local MinIO (docker-compose), upload a handful of sample JSONL objects matching the ALGINF-5738 key scheme, and confirm a local DuckDB instance can `read_json_auto` them via `httpfs` with the expected schema.</li>
+        <li>Deploy Metabase with the community DuckDB driver locally, point it at the same MinIO instance, and confirm a basic query (e.g. `command_summary` counts by `repository`/`command`, and an `UNNEST`-based per-provider/model token breakdown) renders correctly.</li>
+        <li>Deploy to PDC against the real MinIO bucket once ChunkHound clients are uploading real data; confirm dashboards reflect live usage.</li>
+      </ol>
+    </div>
+
+    <footer>ChunkHound Analytics Reporting — Design Proposal — 2026-08-16 (rev. 4)</footer>
+  </div>
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default' });
+</script>
+</body>
+</html>

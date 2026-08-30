@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TurboVec Integration — ChunkHound Architecture Proposal</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 250px; min-width: 250px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar .logo { padding: 0 20px 20px; border-bottom: 1px solid #313244; margin-bottom: 16px; }
+    #sidebar .logo span { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #6c7086; display: block; margin-bottom: 4px; }
+    #sidebar .logo strong { font-size: 14px; color: #cdd6f4; }
+    #sidebar h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #6c7086; padding: 12px 20px 6px; }
+    #sidebar a { display: block; padding: 7px 20px; color: #bac2de; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; transition: all 0.15s; }
+    #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #sidebar a.sub { padding-left: 32px; font-size: 12px; color: #6c7086; }
+    #sidebar a.sub:hover { color: #89b4fa; }
+    .wrapper { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    header { background: linear-gradient(135deg, #1e1e2e 0%, #181825 100%); color: #cdd6f4; padding: 32px 48px; border-bottom: 3px solid #89b4fa; }
+    header .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #6c7086; margin-bottom: 10px; }
+    header h1 { font-size: 26px; font-weight: 700; color: #cdd6f4; line-height: 1.3; }
+    header h1 span { color: #89b4fa; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 10px; font-family: 'Courier New', monospace; }
+    header .meta b { color: #a6e3a1; }
+    #main { flex: 1; padding: 36px 48px; max-width: 960px; }
+    .section { background: #fff; border-radius: 8px; border: 1px solid #e8e8e8; padding: 28px 32px; margin-bottom: 28px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+    .section h2 { font-size: 17px; font-weight: 700; color: #1e1e2e; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 2px solid #89b4fa; display: flex; align-items: center; gap: 10px; }
+    .section h2 .icon { font-size: 18px; }
+    .section h3 { font-size: 14px; font-weight: 700; color: #313244; margin: 20px 0 8px; }
+    .section p { font-size: 14px; line-height: 1.75; color: #555; margin-bottom: 10px; }
+    .section ul, .section ol { padding-left: 22px; margin: 8px 0 12px; }
+    .section li { font-size: 14px; line-height: 1.75; color: #555; margin-bottom: 4px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 18px 20px; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 14px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.6; border-left: 3px solid #89b4fa; }
+    code { background: #f0f0f0; color: #d64045; padding: 2px 7px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    details { border: 1px solid #e0e0e0; border-radius: 8px; margin: 14px 0; overflow: hidden; }
+    summary { padding: 12px 18px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; user-select: none; }
+    summary:hover { background: #f0f0f0; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; background: #f0f4ff; }
+    details > *:not(summary) { padding: 16px 18px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 14px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 14px; text-align: left; font-size: 12px; letter-spacing: 0.5px; }
+    td { padding: 9px 14px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    tr:hover td { background: #f0f4ff; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-blue { background: #dbeafe; color: #1e40af; }
+    .badge-amber { background: #fef3c7; color: #92400e; }
+    .badge-red { background: #fee2e2; color: #991b1b; }
+    .badge-purple { background: #ede9fe; color: #6d28d9; }
+    .callout { border-left: 4px solid #89b4fa; background: #f0f4ff; padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+    .callout.warn { border-color: #f9c642; background: #fffbeb; }
+    .callout.ok { border-color: #a6e3a1; background: #f0fdf4; }
+    .callout p { font-size: 13px; color: #374151; margin: 0; }
+    .callout strong { color: #1e1e2e; }
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 8px; }
+    .kpi-card { background: #1e1e2e; border-radius: 8px; padding: 18px 20px; text-align: center; }
+    .kpi-card .kpi-value { font-size: 32px; font-weight: 800; color: #89b4fa; line-height: 1; }
+    .kpi-card .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; margin-top: 6px; }
+    .kpi-card .kpi-sub { font-size: 12px; color: #a6e3a1; margin-top: 4px; }
+    .flow { display: flex; flex-direction: column; gap: 0; margin: 14px 0; }
+    .flow-step { display: flex; align-items: flex-start; gap: 16px; }
+    .flow-step .num { width: 28px; height: 28px; min-width: 28px; border-radius: 50%; background: #89b4fa; color: #1e1e2e; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; margin-top: 2px; }
+    .flow-step .content { flex: 1; padding-bottom: 20px; border-left: 2px dashed #e0e0e0; margin-left: 14px; padding-left: 20px; }
+    .flow-step:last-child .content { border-left: none; }
+    .flow-step .content strong { font-size: 14px; color: #1e1e2e; }
+    .flow-step .content p { font-size: 13px; color: #666; margin-top: 4px; }
+    .phase-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 8px; }
+    .phase-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 18px 20px; background: #fafafa; }
+    .phase-card .phase-num { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #89b4fa; margin-bottom: 6px; }
+    .phase-card h4 { font-size: 14px; font-weight: 700; color: #1e1e2e; margin-bottom: 8px; }
+    .phase-card p { font-size: 13px; color: #666; line-height: 1.6; }
+    .phase-card .outcome { font-size: 12px; font-weight: 600; color: #a6e3a1; margin-top: 8px; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 28px 0; border-top: 1px solid #e0e0e0; margin-top: 8px; }
+    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .decision-box { background: #fff8e1; border: 2px solid #f9c642; border-radius: 8px; padding: 18px 22px; margin: 12px 0; }
+    .decision-box h4 { font-size: 14px; font-weight: 700; color: #7a5900; margin-bottom: 8px; }
+    .decision-box li { font-size: 13px; color: #5a4000; line-height: 1.7; }
+  </style>
+</head>
+<body>
+<nav id="sidebar">
+  <div class="logo">
+    <span>Architecture Proposal</span>
+    <strong>ChunkHound Native</strong>
+  </div>
+  <h2>Contents</h2>
+  <a href="#overview">Overview</a>
+  <a href="#problem">Problem Statement</a>
+  <a href="#turbovec">What is TurboVec?</a>
+  <a href="#insight">Core Insight</a>
+  <a href="#gains">What We Gain</a>
+  <a href="#architecture">Proposed Architecture</a>
+  <a href="#datamodel" class="sub">Data Model</a>
+  <a href="#lifecycle" class="sub">Index Lifecycle</a>
+  <a href="#modules" class="sub">Module Structure</a>
+  <a href="#phases">Delivery Phases</a>
+  <a href="#risks">Risks &amp; Mitigations</a>
+  <a href="#decisions">Decisions Needed</a>
+  <a href="#verification">Verification Plan</a>
+</nav>
+<div class="wrapper">
+  <header>
+    <div class="eyebrow">ChunkHound · Architecture Proposal · 2026-07-26</div>
+    <h1>Replacing DuckDB-VSS with <span>TurboVec</span><br>in the Native Rust Extension</h1>
+    <div class="meta">Author: <b>Ariel Vaknin</b> &nbsp;|&nbsp; Branch: <b>feat/thin-rust-embed-pipeline</b> &nbsp;|&nbsp; Status: <b>Evaluation</b></div>
+  </header>
+  <div id="main">
+
+    <!-- OVERVIEW -->
+    <div class="section" id="overview">
+      <h2><span class="icon">🎯</span> Overview</h2>
+      <p>This proposal evaluates replacing ChunkHound's float32 vector storage and DuckDB-VSS HNSW search with <strong>TurboVec</strong> — a Rust vector index based on Google Research's TurboQuant algorithm (ICLR 2026). The integration is native Rust-to-Rust via ChunkHound's existing <code>chunkhound-native</code> extension crate, requiring no new Python dependencies.</p>
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-value">16×</div>
+          <div class="kpi-label">Disk &amp; RAM reduction</div>
+          <div class="kpi-sub">float32 → 4-bit quantized</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">+19%</div>
+          <div class="kpi-label">Search speed gain</div>
+          <div class="kpi-sub">vs FAISS FastScan (ARM)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">0.997</div>
+          <div class="kpi-label">Recall @ k=1</div>
+          <div class="kpi-sub">4-bit · 1536-dim vectors</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">4</div>
+          <div class="kpi-label">Delivery phases</div>
+          <div class="kpi-sub">each independently shippable</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROBLEM -->
+    <div class="section" id="problem">
+      <h2><span class="icon">⚠️</span> Problem Statement</h2>
+      <p>ChunkHound stores embeddings as raw <code>FLOAT[1536]</code> / <code>FLOAT[3072]</code> arrays in DuckDB with an HNSW index provided by the <strong>experimental</strong> DuckDB-VSS extension. At scale, this creates two compounding problems:</p>
+      <table>
+        <tr><th>Scale</th><th>Chunks</th><th>Vector storage (float32 / 1536-dim)</th><th>Impact</th></tr>
+        <tr><td>Single repo</td><td>~50K</td><td>~300 MB</td><td><span class="badge badge-green">Manageable</span></td></tr>
+        <tr><td>Monorepo / large project</td><td>~500K</td><td>~3 GB</td><td><span class="badge badge-amber">Memory pressure</span></td></tr>
+        <tr><td>Multi-repo index</td><td>~5M</td><td>~30 GB</td><td><span class="badge badge-red">Prohibitive</span></td></tr>
+      </table>
+      <p>Additionally, DuckDB-VSS requires <code>SET hnsw_enable_experimental_persistence = true</code>, a brittle drop-and-rebuild lifecycle around every bulk insert, and crash-recovery code. These are maintenance liabilities.</p>
+    </div>
+
+    <!-- TURBOVEC -->
+    <div class="section" id="turbovec">
+      <h2><span class="icon">⚡</span> What is TurboVec?</h2>
+      <p>TurboVec (<a href="https://github.com/RyanCodrai/turbovec" style="color:#89b4fa">github.com/RyanCodrai/turbovec</a>) is a Rust library implementing the <strong>TurboQuant</strong> algorithm from Google Research (ICLR 2026). It is a pure in-memory ANN index with file-based persistence.</p>
+      <h3>Key Properties</h3>
+      <table>
+        <tr><th>Property</th><th>Detail</th></tr>
+        <tr><td><strong>Algorithm</strong></td><td>TurboQuant: data-oblivious quantizer, no training phase, online ingest</td></tr>
+        <tr><td><strong>Compression</strong></td><td>8× (2-bit) or 16× (4-bit) — 1536-dim float32: 6,144 B → 384 B at 4-bit</td></tr>
+        <tr><td><strong>Search</strong></td><td>Hand-written SIMD: AVX-512BW (x86) · NEON (ARM) · scalar fallback</td></tr>
+        <tr><td><strong>Speed vs FAISS FastScan</strong></td><td>+10–19% on ARM · competitive on x86 at 4-bit</td></tr>
+        <tr><td><strong>Recall @ k=1 / 1536-dim / 4-bit</strong></td><td>0.997 — reaches 1.0 by k=4</td></tr>
+        <tr><td><strong>Filtering</strong></td><td>In-kernel uint64 allowlist — no post-filter overhead</td></tr>
+        <tr><td><strong>Persistence</strong></td><td><code>.tvim</code> file format — load on startup, no rebuild</td></tr>
+        <tr><td><strong>Language</strong></td><td>Pure Rust crate — <code>cargo add turbovec</code></td></tr>
+        <tr><td><strong>Python bindings</strong></td><td>PyO3 — but <code>from_parts()</code> low-level API is Rust-only</td></tr>
+      </table>
+      <div class="callout">
+        <p><strong>Why Rust-native?</strong> TurboVec's Python API cannot reconstruct an index from raw quantized bytes. Only the Rust API exposes <code>TurboQuantIndex::from_parts()</code> — the essential call for loading a persisted index without re-embedding. ChunkHound already has a Rust extension, making this a natural fit.</p>
+      </div>
+    </div>
+
+    <!-- CORE INSIGHT -->
+    <div class="section" id="insight">
+      <h2><span class="icon">💡</span> Core Insight — Why This Works</h2>
+      <p>Previous approaches (TurboVec as a Python layer) all fail because they create an inescapable trilemma:</p>
+      <table>
+        <tr><th>Constraint</th><th>Python approach</th><th>Rust approach</th></tr>
+        <tr><td>No re-embedding on startup</td><td>❌ Must rebuild from float32 or API</td><td>✅ <code>from_parts()</code> from packed bytes</td></tr>
+        <tr><td>Save disk &amp; memory</td><td>❌ Still needs float32 somewhere</td><td>✅ Only packed codes stored</td></tr>
+        <tr><td>Low startup cost</td><td>❌ API calls or heavy reconstruction</td><td>✅ Single DuckDB BLOB read → index</td></tr>
+      </table>
+      <p>The Rust approach: store the TurboVec <strong>packed quantized bytes per vector</strong> in DuckDB as the durable source of truth, and reconstruct the in-memory <code>IdMapIndex</code> at startup via <code>TurboQuantIndex::from_parts()</code> — no embedding API calls, no float32 anywhere.</p>
+    </div>
+
+    <!-- WHAT WE GAIN -->
+    <div class="section" id="gains">
+      <h2><span class="icon">📈</span> What We Gain</h2>
+      <table>
+        <tr><th>Metric</th><th>Today (DuckDB HNSW)</th><th>TurboVec 4-bit</th><th>Delta</th></tr>
+        <tr><td>Storage per vector (1536-dim)</td><td>6,144 bytes (float32)</td><td>384 bytes</td><td><span class="badge badge-green">16× smaller</span></td></tr>
+        <tr><td>1M-chunk corpus — vectors on disk</td><td>~6 GB</td><td>~375 MB</td><td><span class="badge badge-green">−5.6 GB</span></td></tr>
+        <tr><td>RAM for vector index</td><td>~6 GB</td><td>~375 MB</td><td><span class="badge badge-green">−5.6 GB</span></td></tr>
+        <tr><td>Search speed (ARM)</td><td>DuckDB HNSW baseline</td><td>+10–19% over FAISS FastScan</td><td><span class="badge badge-green">Faster</span></td></tr>
+        <tr><td>Recall @ k=1 / 1536-dim</td><td>~1.0 (exact)</td><td>0.997</td><td><span class="badge badge-amber">−0.3% — negligible</span></td></tr>
+        <tr><td>Startup (no re-embedding)</td><td>Load DuckDB HNSW file</td><td>BLOB read → from_parts()</td><td><span class="badge badge-blue">Equivalent</span></td></tr>
+        <tr><td>Bulk insert protocol</td><td>Drop HNSW → write → rebuild HNSW</td><td>Direct add() to index</td><td><span class="badge badge-green">Simplified</span></td></tr>
+        <tr><td>DuckDB-VSS experimental flag</td><td>Required</td><td>Eliminated</td><td><span class="badge badge-green">Cleaner</span></td></tr>
+        <tr><td>Filtering (path, provider, model)</td><td>SQL WHERE clause pre-filter</td><td>In-kernel uint64 allowlist</td><td><span class="badge badge-green">Faster</span></td></tr>
+      </table>
+      <div class="callout ok">
+        <p><strong>For code search at k≥4</strong>, recall reaches 1.0 — the 0.3% gap at k=1 is imperceptible in practice since ChunkHound returns the top 10+ results by default.</p>
+      </div>
+    </div>
+
+    <!-- ARCHITECTURE -->
+    <div class="section" id="architecture">
+      <h2><span class="icon">🏗️</span> Proposed Architecture</h2>
+
+      <h3 id="datamodel">Data Model Change</h3>
+      <p><strong>Remove:</strong> <code>embeddings_1536</code>, <code>embeddings_3072</code> tables (float32 arrays + HNSW index)</p>
+      <p><strong>Add:</strong></p>
+      <pre><code>-- Per-vector durable store (packed quantized codes)
+embeddings_quantized (
+    id           INTEGER PRIMARY KEY,
+    chunk_id     INTEGER NOT NULL REFERENCES chunks(id),
+    provider     TEXT NOT NULL,
+    model        TEXT NOT NULL,
+    dims         INTEGER NOT NULL,
+    packed_codes BLOB NOT NULL,   -- TurboVec quantized bytes for this vector
+    scale        REAL NOT NULL,   -- per-vector length-renormalization scalar
+    UNIQUE (chunk_id, provider, model)
+)
+
+-- Warm index snapshot per (provider, model, dims) for fast startup
+turbovec_indexes (
+    id         INTEGER PRIMARY KEY,
+    provider   TEXT NOT NULL,
+    model      TEXT NOT NULL,
+    dims       INTEGER NOT NULL,
+    payload    BLOB NOT NULL,     -- TurboQuantIndex::to_bytes() output
+    n_vectors  INTEGER NOT NULL,
+    updated_at TIMESTAMP,
+    UNIQUE (provider, model, dims)
+)</code></pre>
+      <div class="callout">
+        <p><strong>Why two tables?</strong> <code>turbovec_indexes</code> is the fast-startup path — load one BLOB, get a live index. <code>embeddings_quantized</code> is the durable per-vector fallback — if the snapshot is stale or corrupt, rebuild from packed codes without any embedding API calls.</p>
+      </div>
+
+      <h3 id="lifecycle">Index Lifecycle</h3>
+      <div class="flow">
+        <div class="flow-step">
+          <div class="num">1</div>
+          <div class="content">
+            <strong>Startup</strong>
+            <p>Read <code>turbovec_indexes</code> BLOB → <code>IdMapIndex::from_parts()</code> → in-memory index ready. If BLOB missing: read <code>embeddings_quantized</code> row-by-row → rebuild. No embedding API calls ever.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="num">2</div>
+          <div class="content">
+            <strong>Indexing (write path)</strong>
+            <p><code>EmbedBatchFn</code> returns <code>Vec&lt;f32&gt;</code> (unchanged). Rust normalizes + encodes via TurboVec. Packed codes + scale stored in <code>embeddings_quantized</code> (upsert). Vector added to in-memory <code>IdMapIndex</code>. At batch-end: serialize index → <code>UPDATE turbovec_indexes SET payload=...</code>.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="num">3</div>
+          <div class="content">
+            <strong>Search (query path)</strong>
+            <p>Python calls <code>RustDbWriter.search_semantic(query_vec, provider, model, k, path_filter)</code>. Rust encodes query (no DB read). If <code>path_filter</code>: SQL query for matching <code>chunk_id</code>s → uint64 allowlist. <code>IdMapIndex.search(query, k, allowlist)</code> → <code>(scores, chunk_ids)</code>. SQL join for metadata enrichment.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="num">4</div>
+          <div class="content">
+            <strong>Delete / compaction</strong>
+            <p><code>IdMapIndex.remove(chunk_id)</code> is O(1) — no index rebuild. DuckDB compaction protocol unchanged for <code>chunks</code> + <code>files</code> tables. <code>turbovec_indexes</code> BLOB updated post-compaction.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 id="modules">Module Structure in <code>chunkhound-native</code></h3>
+      <pre><code>src/
+├── embed/                    ← unchanged — produces Vec&lt;f32&gt;
+│   ├── mod.rs  (EmbedBatchFn trait)
+│   ├── openai.rs
+│   ├── voyageai.rs
+│   └── retry.rs / token.rs / callback.rs
+├── db/
+│   ├── mod.rs                ← DbBackend trait (interface unchanged)
+│   ├── duckdb_backend.rs     ← refactored: remove HNSW, add quantized storage
+│   └── turbovec_index.rs     ← NEW: IdMapIndex lifecycle (load / add / search / persist)
+├── pipeline/
+│   └── pipeline.rs           ← updated: wire quantize step between embed → DB write
+└── lib.rs                    ← expose search_semantic via new PyO3 method on RustDbWriter</code></pre>
+      <p>The <code>DbBackend</code> trait interface is unchanged — the TurboVec integration is an implementation detail behind the existing abstraction boundary.</p>
+
+      <details>
+        <summary>Cargo.toml change (one line)</summary>
+        <pre><code>[dependencies]
+# existing deps unchanged ...
+turbovec = "0.x"   # TurboQuant quantization + SIMD search (pure Rust, no system libs)</code></pre>
+        <p>No new Python dependencies. No new system libraries. TurboVec is a pure Rust crate. Existing <code>duckdb</code> crate dependency retained for metadata storage.</p>
+      </details>
+    </div>
+
+    <!-- PHASES -->
+    <div class="section" id="phases">
+      <h2><span class="icon">🚀</span> Delivery Phases</h2>
+      <p>Each phase is independently shippable and reversible. The old float32 path remains live until Phase 4.</p>
+      <div class="phase-grid">
+        <div class="phase-card">
+          <div class="phase-num">Phase 1</div>
+          <h4>Quantized Storage</h4>
+          <p>Add <code>embeddings_quantized</code> table. Write packed codes alongside existing float32 during indexing. Zero user-visible change.</p>
+          <div class="outcome">✓ Durable quantized store in place</div>
+        </div>
+        <div class="phase-card">
+          <div class="phase-num">Phase 2</div>
+          <h4>In-Memory Index</h4>
+          <p>Add <code>turbovec_index.rs</code> module. Load <code>IdMapIndex</code> from quantized table at startup via <code>from_parts()</code>. Persist snapshot to <code>turbovec_indexes</code>.</p>
+          <div class="outcome">✓ Fast startup without re-embedding</div>
+        </div>
+        <div class="phase-card">
+          <div class="phase-num">Phase 3</div>
+          <h4>Search Migration</h4>
+          <p>Expose <code>search_semantic</code> on <code>RustDbWriter</code> PyO3 surface. Route Python search calls to Rust TurboVec. SIMD-accelerated search live.</p>
+          <div class="outcome">✓ Full performance gains active</div>
+        </div>
+        <div class="phase-card">
+          <div class="phase-num">Phase 4</div>
+          <h4>Float32 Removal</h4>
+          <p>Drop <code>embeddings_{dims}</code> float32 tables. Remove DuckDB-VSS extension dependency and the HNSW drop/rebuild lifecycle.</p>
+          <div class="outcome">✓ Full memory &amp; disk savings realized</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RISKS -->
+    <div class="section" id="risks">
+      <h2><span class="icon">🛡️</span> Risks &amp; Mitigations</h2>
+      <table>
+        <tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr>
+        <tr>
+          <td><strong>ANN recall loss</strong> (0.3% at k=1)</td>
+          <td><span class="badge badge-amber">Low</span></td>
+          <td>Use 4-bit (not 2-bit). Recall reaches 1.0 by k=4. ChunkHound returns top 10+ by default — the gap is imperceptible.</td>
+        </tr>
+        <tr>
+          <td><strong>TurboVec maturity</strong> (v0.x library)</td>
+          <td><span class="badge badge-amber">Medium</span></td>
+          <td>Pin to exact version in <code>Cargo.lock</code>. <code>from_parts()</code> is the stable low-level API. Quantization math is well-understood (Lloyd-Max, published at ICLR 2026).</td>
+        </tr>
+        <tr>
+          <td><strong>BLOB write amplification</strong> at large scale</td>
+          <td><span class="badge badge-amber">Medium</span></td>
+          <td>Serialize index only at batch-end, not per-vector. A 1M-vector index at 4-bit/1536-dim ≈ 375 MB — one write per batch is acceptable for a daemon process.</td>
+        </tr>
+        <tr>
+          <td><strong>Migration of existing float32 data</strong></td>
+          <td><span class="badge badge-blue">One-time</span></td>
+          <td>One-time migration at Phase 4: read float32 from DuckDB → encode via TurboVec → write packed codes. No embedding API calls. Runs as a schema migration step.</td>
+        </tr>
+        <tr>
+          <td><strong>Multi-model / multi-dim indexes</strong></td>
+          <td><span class="badge badge-green">Handled</span></td>
+          <td>One <code>IdMapIndex</code> per <code>(provider, model, dims)</code> — same partition pattern as current per-dim tables. Managed in a <code>HashMap</code> in <code>turbovec_index.rs</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Index corruption recovery</strong></td>
+          <td><span class="badge badge-green">Handled</span></td>
+          <td><code>embeddings_quantized</code> is the durable fallback — always rebuild from packed codes without re-embedding, even if the <code>turbovec_indexes</code> BLOB is corrupt.</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- DECISIONS -->
+    <div class="section" id="decisions">
+      <h2><span class="icon">🔑</span> Decisions Needed</h2>
+      <div class="decision-box">
+        <h4>Open Questions for Architects / PO</h4>
+        <ol style="padding-left:18px;">
+          <li><strong>Recall tolerance</strong> — Is 0.997 R@1 (vs ~1.0 exact) acceptable for the code-search use case? At k≥4, recall is 1.0.</li>
+          <li><strong>Migration story</strong> — One-time re-quantization of existing float32 data is required at Phase 4. Acceptable as a schema migration step (no API calls, automated)?</li>
+          <li><strong>Priority</strong> — Estimated 2–3 weeks of engineering. Does the 16× memory reduction and search speed improvement justify this vs. other roadmap items?</li>
+        </ol>
+      </div>
+      <div class="tag-row">
+        <span class="badge badge-purple">Architecture Decision Required</span>
+        <span class="badge badge-amber">PO Priority Call</span>
+        <span class="badge badge-blue">Est. 2–3 weeks engineering</span>
+        <span class="badge badge-green">No new Python deps</span>
+        <span class="badge badge-green">Phased &amp; reversible</span>
+      </div>
+    </div>
+
+    <!-- VERIFICATION -->
+    <div class="section" id="verification">
+      <h2><span class="icon">✅</span> Verification Plan</h2>
+      <p>After implementation, verify the following before marking the feature complete:</p>
+      <table>
+        <tr><th>Check</th><th>Command / Method</th><th>Expected</th></tr>
+        <tr><td>Smoke tests pass</td><td><code>uv run pytest tests/test_smoke.py -v -n auto</code></td><td>All green</td></tr>
+        <tr><td>Recall parity</td><td>Run known query before and after on same corpus; compare top-10</td><td>Same chunks in top-10</td></tr>
+        <tr><td>DB size reduction</td><td>Measure <code>.chunkhound/chunks.db</code> on 100K-chunk corpus pre/post Phase 4</td><td>~16× smaller vector storage</td></tr>
+        <tr><td>Startup time</td><td>Time cold-start with 1M-vector index (BLOB load vs HNSW rebuild)</td><td>Comparable or faster</td></tr>
+        <tr><td>No re-embedding on restart</td><td>Restart daemon after indexing; confirm no embedding API calls in logs</td><td>Zero API calls on startup</td></tr>
+        <tr><td>Full test suite</td><td><code>uv run pytest tests/ -v</code></td><td>All green</td></tr>
+        <tr><td>Rust checks</td><td><code>make rust-check &amp;&amp; make rust-test</code></td><td>No warnings or failures</td></tr>
+      </table>
+    </div>
+
+    <footer>
+      ChunkHound · TurboVec Integration Proposal · 2026-07-26 · Author: Ariel Vaknin
+    </footer>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design: TurboVec Index Recovery (Two Options)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+  #sidebar { width: 260px; min-width: 260px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+  #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+  #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+  #sidebar a.sub { padding-left: 34px; font-size: 12px; color: #a6adc8; }
+  #main { flex: 1; padding: 40px; max-width: 960px; }
+  header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+  header h1 { font-size: 22px; font-weight: 600; }
+  header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+  .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+  .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+  .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 18px 0 8px; }
+  .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+  .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+  .section ol li, .section ul li { margin-bottom: 8px; }
+  pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+  code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+  th { background: #1e1e2e; color: #cdd6f4; padding: 9px 12px; text-align: left; }
+  td { padding: 8px 12px; border-bottom: 1px solid #eee; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .callout { background: #eef6ff; border-left: 4px solid #89b4fa; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; color: #1e3a5f; }
+  .callout.warning { background: #fff8ec; border-color: #f9c642; color: #7a5900; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; margin-left: 6px; }
+  .badge-a { background: #dbeafe; color: #1e40af; }
+  .badge-b { background: #fce7f3; color: #9d174d; }
+  footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+</style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#context">Context</a>
+  <a href="#scope">Scope</a>
+  <a href="#foundation">Shared Foundation</a>
+  <a href="#option-a">Option A — Ships Now</a>
+  <a href="#option-a" class="sub">Write path</a>
+  <a href="#option-a" class="sub">Read/recovery path</a>
+  <a href="#option-a" class="sub">Error handling &amp; migration</a>
+  <a href="#option-b">Option B — Future Release</a>
+  <a href="#option-b" class="sub">New tables</a>
+  <a href="#option-b" class="sub">Id-reattachment gap</a>
+  <a href="#option-b" class="sub">Write/read paths</a>
+  <a href="#testing">Testing Strategy</a>
+  <a href="#rollout">Rollout</a>
+  <a href="#non-goals">Non-Goals</a>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>Design: TurboVec Index Recovery (Two Options)</h1>
+    <div class="meta">docs/superpowers/specs/2026-08-04-turbovec-index-recovery-design.md | Status: Approved, pre-implementation</div>
+  </header>
+  <div id="main">
+
+    <div class="section" id="context">
+      <h2>Context</h2>
+      <p>The TurboVec integration design doc (<code>turbovec_integration_design_report.html</code>) proposed replacing DuckDB-VSS/HNSW with the <code>turbovec</code> Rust crate, including an <code>embeddings_quantized</code> table whose sole stated purpose is: <em>"if the <code>turbovec_indexes</code> snapshot is stale or corrupt, rebuild the search index directly from packed codes without any embedding API calls."</em></p>
+      <p>A POC (<code>test-crates/turbovec-poc/</code>) validated this and every other headline claim against this repo's own real, indexed embeddings, and found the mechanism above unbuildable against the published <code>turbovec</code> 0.9.0 crate: <code>TurboQuantIndex::from_parts()</code> and its accessors (<code>packed_codes()</code>, <code>scales()</code>, <code>tqplus_shift()</code>, <code>tqplus_scale()</code>) are <code>pub(crate)</code>, not reachable from any downstream crate. The exact fix is merged upstream on turbovec's <code>main</code> branch (commit <code>ae31ba3</code>, PR #204) but not yet released to crates.io.</p>
+      <p>Two recovery designs were built and tested in the POC, both passing against this repo's real corpus:</p>
+      <ul>
+        <li><strong>Option A</strong> <span class="badge badge-a">POC "3(C)"</span> — checksummed, rotating whole-index snapshots (the one mechanism the <em>published</em> 0.9.0 API gives for free) plus ChunkHound's existing float32 table as the true last resort — no <code>from_parts()</code> needed at all.</li>
+        <li><strong>Option B</strong> <span class="badge badge-b">POC "Option 1"</span> — git-pinned to the unreleased upstream commit, proving the design doc's original per-vector <code>from_parts()</code> mechanism works end to end.</li>
+      </ul>
+      <p>This document is the production design for both, scoped specifically to <strong>index recovery</strong> — not the full DuckDB-VSS→TurboVec migration.</p>
+    </div>
+
+    <div class="section" id="scope">
+      <h2>Scope</h2>
+      <p><strong>In scope</strong>: the Rust-side persistence and recovery lifecycle for a TurboVec-backed vector index — the same <code>open</code>/<code>write_batch</code>/<code>needs_compaction</code>/<code>run_compaction</code> lifecycle <code>DuckDbHnswBackend</code> (<code>src/db/duckdb_backend.rs</code>) already implements via the <code>DbBackend</code> trait (<code>src/db/mod.rs</code>).</p>
+      <p><strong>Out of scope</strong>: exposing TurboVec search via PyO3 (design doc's "Phase 3"); dropping the float32 <code>embeddings_{dims}</code> tables (design doc's "Phase 4" — a separate, later decision per Rollout); any change to embedding generation, chunking, or the existing DuckDB-VSS/HNSW code path itself.</p>
+      <p><strong>Coexistence model</strong>: sequential, not dual-path. Option A is the real, shipped implementation. Option B is designed in full detail now so that swapping it in later (once turbovec cuts an actual tagged release) is a scoped, understood migration — not a rediscovery effort. No runtime/compile-time switching logic between A and B is built; the switch happens by changing the <code>turbovec</code> dependency and updating one backend module.</p>
+      <p><strong>Rollout model</strong>: opt-in via a new <code>database.vector_backend</code> config flag (default <code>"duckdb_hnsw"</code>). Existing installs are unaffected until someone opts in.</p>
+    </div>
+
+    <div class="section" id="foundation">
+      <h2>Shared Foundation</h2>
+      <p><strong>Integration point</strong>: <code>create_backend(cfg: DbConfig) -&gt; Box&lt;dyn DbBackend&gt;</code> (<code>src/db/mod.rs</code>) currently hardcodes <code>DuckDbHnswBackend::new(cfg)</code>. Add:</p>
+      <pre><code>pub enum VectorBackend {
+    DuckDbHnsw, // default
+    TurboVec,
+}</code></pre>
+      <p>as a new field on <code>DbConfig</code>, and branch in <code>create_backend</code> accordingly. <code>DbBackend</code>'s trait signature (<code>open</code>, <code>close</code>, <code>write_batch</code>, <code>needs_compaction</code>, <code>run_compaction</code>, plus the default-no-op <code>drop_all_hnsw_indexes</code>/<code>ensure_all_hnsw_indexes</code>) needs no changes — this is exactly the abstraction point the trait already exists for.</p>
+      <p><strong>New module</strong>: <code>src/db/turbovec_backend.rs</code>, implementing <code>DbBackend</code>, alongside <code>duckdb_backend.rs</code>. Shares the same DuckDB <code>Connection</code> and existing <code>chunks</code>/<code>files</code> tables; only the vector-storage tables differ from <code>DuckDbHnswBackend</code>.</p>
+      <p><strong>New table (both options)</strong>: <code>turbovec_indexes</code> — the warm-snapshot cache.</p>
+      <pre><code>CREATE TABLE turbovec_indexes (
+    provider    TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    dims        INTEGER NOT NULL,
+    bit_width   INTEGER NOT NULL,
+    generation  INTEGER NOT NULL,  -- cycles 0/1
+    payload     BLOB NOT NULL,
+    checksum    BIGINT NOT NULL,   -- CRC32
+    n_vectors   INTEGER NOT NULL,
+    updated_at  TIMESTAMP NOT NULL,
+    UNIQUE (provider, model, dims, generation)
+);</code></pre>
+      <p>The checksummed-rotation logic (write two generations, verify-on-load, fall through) ports directly from the POC's <code>src/snapshot.rs</code> (<code>write_checksummed</code>, <code>load_verified</code>, <code>load_any_verified</code>) — it doesn't depend on which option is active.</p>
+      <p><strong>New Cargo.toml dependencies</strong>: <code>turbovec</code> (version per option, see below), <code>crc32fast</code>, <code>blas-src</code>/<code>openblas-src</code> (<code>features = ["openblas"]</code> / <code>["cblas", "system"]</code>) — plus, critically, an <code>extern crate blas_src as _;</code> shim in whatever binary/lib target links <code>turbovec</code>, or the linker drops it as "unused" (a real gotcha the POC hit).</p>
+      <div class="callout warning"><strong>Build/ops impact</strong> (new, not optional): <code>turbovec</code> unconditionally requires a system BLAS library on Linux via <code>ndarray</code>'s <code>blas</code> feature. This machine needed <code>sudo apt-get install libopenblas-dev</code> before <code>cargo build</code> would even link. <code>AGENTS.md</code> and <code>RELEASING.md</code> need a new documented build prerequisite, and release-wheel-building CI images must include it before <code>vector_backend=turbovec</code> can be enabled anywhere — see Rollout.</div>
+    </div>
+
+    <div class="section" id="option-a">
+      <h2>Option A — Ships Now <span class="badge badge-a">turbovec 0.9.0, published</span></h2>
+
+      <h3>Write path</h3>
+      <p>Inside <code>write_batch</code>, additive to the existing logic:</p>
+      <ol>
+        <li>Embeddings arrive as <code>Vec&lt;f32&gt;</code> per chunk — unchanged.</li>
+        <li>L2-normalize (so TurboVec's raw score is cosine-comparable, per POC finding).</li>
+        <li><code>IdMapIndex::add_with_ids(&amp;vectors, &amp;chunk_ids)</code> on an in-memory index held per <code>(provider, model, dims)</code> in a <code>HashMap</code> for the process lifetime.</li>
+        <li>At batch-end (not per-vector — write-amplification mitigation): <code>snapshot::write_checksummed(&amp;index, path)</code> targeting the next rotation generation, UPSERT into <code>turbovec_indexes</code>.</li>
+        <li><strong><code>insert_embeddings_txn</code> (the existing float32 write path) is completely unchanged.</strong> <code>embeddings_{dims}</code> keeps being written exactly as today — this is what makes Option A additive rather than a rewrite.</li>
+      </ol>
+
+      <h3>Read/recovery path</h3>
+      <p>On <code>open()</code>:</p>
+      <ol>
+        <li>Try generation 0, then generation 1 (checksum-verified via <code>load_any_verified</code>) — first match wins.</li>
+        <li>If both missing/corrupt: <code>SELECT chunk_id, embedding FROM embeddings_{dims} WHERE provider=... AND model=...</code>, batch into <code>add_with_ids</code>. Measured cold-start cost (POC, real data): <strong>0.45s at 2-bit / 0.62s at 4-bit for 72,974 vectors</strong> — scales roughly linearly; log a warning if it exceeds a configurable threshold on much larger corpora.</li>
+      </ol>
+
+      <h3>Error handling</h3>
+      <ul>
+        <li>Snapshot write I/O failure → new <code>DbError::SnapshotWrite(io::Error)</code> variant, propagated like existing compaction errors.</li>
+        <li>Both generations corrupt <strong>and</strong> the float32 rebuild fails (e.g. <code>embeddings_{dims}</code> itself missing/corrupt) → the true catastrophic path. Surface a clear, actionable error ("semantic search unavailable for this partition, re-run indexing") — never silently return an empty or wrong index.</li>
+      </ul>
+
+      <h3>Migration</h3>
+      <p>Purely additive: <code>CREATE TABLE IF NOT EXISTS turbovec_indexes</code>, then a one-time cold-start rebuild from existing float32 data on first <code>open()</code> after a user flips the config flag. No destructive step; fully reversible (flip the flag back — <code>embeddings_{dims}</code> was never touched).</p>
+
+      <h3>Storage cost (measured, POC)</h3>
+      <p>Float32 baseline (72,974 × 256-dim) ≈74.7 MB. N=2 checksummed rotation at 4-bit ≈20.4 MB (2 × the measured 140 B/vector single-snapshot cost). Total with both live: <strong>≈95.2 MB, +27.3% vs. today's float32-only baseline.</strong></p>
+    </div>
+
+    <div class="section" id="option-b">
+      <h2>Option B — Future Release <span class="badge badge-b">once turbovec ships past ae31ba3</span></h2>
+
+      <h3>New tables</h3>
+      <p><code>embeddings_quantized</code> — the per-vector durable store the original design doc wanted:</p>
+      <pre><code>CREATE TABLE embeddings_quantized (
+    chunk_id     INTEGER NOT NULL,
+    provider     TEXT NOT NULL,
+    model        TEXT NOT NULL,
+    dims         INTEGER NOT NULL,
+    bit_width    INTEGER NOT NULL,
+    packed_codes BLOB NOT NULL,
+    scale        REAL NOT NULL,
+    created_at   TIMESTAMP NOT NULL,
+    UNIQUE (chunk_id, provider, model)
+);</code></pre>
+      <div class="callout"><strong>Schema nuance found by the POC, not in the original design doc</strong>: <code>tqplus_shift</code>/<code>tqplus_scale</code> are calibrated <strong>once per partition, per-coordinate</strong> (length = <code>dims</code>), not per vector — they don't belong in <code>embeddings_quantized</code>. A second, tiny table is needed instead.</div>
+      <pre><code>CREATE TABLE turbovec_calibration (
+    provider      TEXT NOT NULL,
+    model         TEXT NOT NULL,
+    dims          INTEGER NOT NULL,
+    bit_width     INTEGER NOT NULL,
+    tqplus_shift  BLOB NOT NULL,
+    tqplus_scale  BLOB NOT NULL,
+    updated_at    TIMESTAMP NOT NULL,
+    UNIQUE (provider, model, dims, bit_width)
+);</code></pre>
+      <p>Missing this would mean every rebuild silently used wrong/default calibration.</p>
+
+      <h3>The id-reattachment gap</h3>
+      <p>Even in the tested unreleased commit, <code>IdMapIndex</code> has no accessor for its inner <code>TurboQuantIndex</code>. Option B's backend cannot call an <code>IdMapIndex::from_parts()</code> — it doesn't exist. It must build a bare <code>TurboQuantIndex</code> via the now-public <code>from_parts()</code> and wrap it in a <strong>new, hand-rolled</strong> type:</p>
+      <pre><code>struct RecoveredIndex {
+    inner: TurboQuantIndex,
+    slot_to_id: Vec&lt;u64&gt;,
+    id_to_slot: HashMap&lt;u64, usize&gt;,
+}</code></pre>
+      <p>This re-implements the handful of lines <code>IdMapIndex</code> uses internally for exactly this purpose, since that version is private to the <code>turbovec</code> crate.</p>
+
+      <h3>Write path</h3>
+      <p>Same as Option A through <code>add_with_ids</code>. Additionally, at batch-end: extract <code>packed_codes()</code>/<code>scales()</code> (per-vector, sliceable by slot) and <code>tqplus_shift()</code>/<code>tqplus_scale()</code> (per-partition), UPSERT the per-vector slices into <code>embeddings_quantized</code> keyed by <code>chunk_id</code>, UPSERT the calibration arrays into <code>turbovec_calibration</code>. <code>turbovec_indexes</code> (the warm-snapshot cache) is unchanged from Option A — still the fast path; <code>embeddings_quantized</code> is the fallback, not a replacement for it.</p>
+
+      <h3>Read/recovery path</h3>
+      <p>Try <code>turbovec_indexes</code> generations first (identical to Option A). If both are gone: <code>SELECT packed_codes, scale FROM embeddings_quantized WHERE ... ORDER BY &lt;insertion order&gt;</code>, <code>SELECT tqplus_shift, tqplus_scale FROM turbovec_calibration WHERE ...</code>, concatenate into the flat arrays <code>from_parts()</code> expects, call it, wrap in <code>RecoveredIndex</code>. No re-quantization CPU cost — the design doc's original "rebuild from packed bytes" promise, now real and tested (POC's <code>from_parts_reconstructs_index_identical_to_original</code>, bit-identical search results).</p>
+
+      <h3>Error handling</h3>
+      <p><code>from_parts()</code> returns <code>Result&lt;_, FromPartsError&gt;</code> (~15 variants) — map into <code>DbError</code>; mostly "shouldn't happen unless the DB itself is corrupt," since we control what gets written. A <strong>partial</strong> <code>embeddings_quantized</code> read (some <code>chunk_id</code>s missing/decode-fail, most present) must <strong>abort the whole-partition rebuild</strong>, not silently return an index missing some vectors — a silently-incomplete index is a worse correctness bug than a loud failure.</p>
+
+      <h3>A→B migration (once a release ships)</h3>
+      <ol>
+        <li>Backfill <code>embeddings_quantized</code>+<code>turbovec_calibration</code> from the already-built in-memory indexes (cheap, no re-embedding — same <code>add_with_ids</code>-then-extract logic as the write path, run once over existing data).</li>
+        <li>Run with both float32 and <code>embeddings_quantized</code> live for a confidence-building period.</li>
+        <li>Drop <code>embeddings_{dims}</code> in a <strong>separately-decided, later</strong> phase (design doc's original "Phase 4") — not bundled into "upgrade to the new turbovec release."</li>
+      </ol>
+    </div>
+
+    <div class="section" id="testing">
+      <h2>Testing Strategy</h2>
+      <p>Port the POC's already-passing tests directly:</p>
+      <ul>
+        <li><strong>Rust</strong>: a corruption-recovery test (build small index → write 2 checksummed generations → corrupt gen 0 → assert fallthrough to gen 1, identical search → corrupt both → assert clean error) and a rebuild-from-floats test (simulate missing snapshot → rebuild via <code>add_with_ids</code> → assert identical results) — near-verbatim ports of the POC's <code>corruption_recovery.rs</code>/<code>rebuild_from_floats.rs</code>.</li>
+        <li><strong>Python</strong>, mirroring the existing <code>tests/test_rust_db_writer.py</code> pattern (<code>pytest.importorskip("chunkhound_native", ...)</code>, fresh DuckDB connection post-close): open <code>RustDbWriter</code> with <code>vector_backend="turbovec"</code>, write a batch, close, reopen, verify <code>turbovec_indexes</code> is populated and recovery behaves correctly through the actual PyO3 boundary.</li>
+        <li><strong>Parity test</strong>: adapt the POC's <code>demo_compare.py</code> side-by-side logic into an automated check — assert <code>overlap@10</code> between TurboVec-backed and DuckDB-VSS results stays above a threshold (e.g. ≥0.95) on a small real fixture corpus.</li>
+        <li><strong>Option B's tests</strong> (ported <code>from_parts_reconstructs_index_identical_to_original</code>, plus new ones for the <code>embeddings_quantized</code>+calibration read path) are written against a git-pinned dependency on a feature branch, same as the POC — they cannot run in CI on <code>main</code> until a real release ships and <code>Cargo.toml</code> updates for real.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="rollout">
+      <h2>Rollout</h2>
+      <ol>
+        <li>Merge Option A behind <code>database.vector_backend</code> (default off) — zero behavior change for anyone who doesn't opt in.</li>
+        <li>Internal dogfood (this repo's own config, or a few volunteer users) to validate recall/latency/compression against real day-to-day usage, beyond the POC's held-out benchmark.</li>
+        <li>Once a soak period builds confidence, consider flipping the default — the flag stays as an escape hatch regardless.</li>
+        <li>(Separate, later decision, not part of this design) — eventually consider retiring the DuckDB-VSS/HNSW path entirely; Option B's own float32-drop is a similarly separate, later call.</li>
+      </ol>
+      <div class="callout"><strong>Observability</strong>: log at INFO whenever recovery falls back past generation 0 ("generation 0 failed checksum, using generation 1"; "both snapshots missing, rebuilt from float32 in 0.6s") — recovery should never be silent.</div>
+      <div class="callout warning"><strong>Build prerequisite</strong>: <code>libopenblas-dev</code> (Linux) / platform equivalent must be added to CI wheel-building images before step 1 ships to anyone, including internal dogfooding.</div>
+    </div>
+
+    <div class="section" id="non-goals">
+      <h2>Non-Goals</h2>
+      <ul>
+        <li>Exposing TurboVec search via PyO3 (a separate design, this repo's "Phase 3").</li>
+        <li>Dropping <code>embeddings_{dims}</code> float32 tables (a separate, later decision for both options).</li>
+        <li>Any dual-path runtime switching between Option A and Option B — the coexistence model is sequential.</li>
+        <li>Retiring DuckDB-VSS/HNSW — out of scope until TurboVec has proven itself in production under the opt-in flag.</li>
+      </ul>
+    </div>
+
+    <footer>Design: TurboVec Index Recovery — docs/superpowers/specs/2026-08-04-turbovec-index-recovery-design.md</footer>
+  </div>
+</div>
+</body>
+</html>

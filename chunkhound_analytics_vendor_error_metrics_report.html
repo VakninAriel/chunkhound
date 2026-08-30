@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Per-Vendor Call/Error Metrics — Rev. 6</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 260px; min-width: 260px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+    #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+    #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #main { flex: 1; padding: 40px; max-width: 960px; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+    header h1 { font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+    .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 16px 0 8px; }
+    .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+    .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; }
+    summary { padding: 12px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 6px; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }
+    details > *:not(summary) { padding: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .callout { background: #eef6ff; border-left: 4px solid #89b4fa; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; color: #1e3a5f; }
+    .diff-old { color: #f38ba8; }
+    .diff-new { color: #a6e3a1; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+  </style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#overview">Overview</a>
+  <a href="#part1">Part 1 — Data Model</a>
+  <a href="#part2">Part 2 — Recorder API</a>
+  <a href="#part3">Part 3 — Instrumentation Placement</a>
+  <a href="#part4">Part 4 — Testing &amp; Revision Header</a>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>Per-Vendor Call/Error Metrics — Rev. 6</h1>
+    <div class="meta">Section update for the per-user analytics design | Generated: 2026-08-27 | Status: design only, nothing implemented</div>
+  </header>
+  <div id="main">
+
+    <div class="section" id="overview">
+      <h2>Overview</h2>
+      <p>This replaces the rev. 5 markdown snippet with rev. 6 content. New requirement: get the number of calls made to each vendor (embedding / reranking / LLM), the number of those calls that failed, and a spread of failure types — <strong>per vendor</strong>, not just a flat command-level count as in rev. 5.</p>
+      <p>Four parts follow:</p>
+      <ol>
+        <li>Full replacement for the <code>providers</code>/<code>errors</code> portion of the Data Model section (new JSON shape + updated examples).</li>
+        <li>Full replacement for the <code>AnalyticsRecorder</code> API table in Architecture Detail.</li>
+        <li>New subsection — Instrumentation placement per vendor.</li>
+        <li>Targeted edits to the Testing section and the revision header.</li>
+      </ol>
+    </div>
+
+    <div class="section" id="part1">
+      <h2>Part 1 — Data Model: <code>providers</code> / <code>errors</code> (full replacement)</h2>
+
+      <h3>Why this changed</h3>
+      <p>Rev. 5's <code>errors: {count, types}</code> lives at the command level only — it can't tell you <em>which</em> vendor call failed. A command that calls both an embedding provider and an LLM and ends with <code>errors.types == ["TimeoutError"]</code> gives no way to attribute that timeout to either one. This rev. moves failure accounting into the same per-<code>(kind, provider, model)</code> grouping already used for <code>calls</code>/token totals, so cost and failure data share one source of truth.</p>
+
+      <h3>New shape</h3>
+      <div class="callout">
+        <strong><code>providers[&lt;kind&gt;]</code> entry</strong> <em>(revised, rev. 6)</em>: <code>{provider, model, calls, fails, error_types, input_tokens, output_tokens}</code>. <code>calls</code> is now <strong>total attempts, success + fail</strong> (previously success-only) — consistent with how retries already inflated <code>calls</code> in the rev. 5 examples below. <code>fails</code> is the subset of <code>calls</code> that raised. <code>error_types</code> is <code>{ExceptionTypeName: count}</code>, scoped to this <code>(kind, provider, model)</code> group — same "type name only, no message text" privacy rule as rev. 5's command-level <code>errors</code>.
+      </div>
+      <p>The command-level <code>errors: {count, types}</code> block is <strong>removed</strong> — a command-level failure total can always be derived by summing <code>fails</code> across every <code>providers[*][*]</code> entry. In its place, one narrow fallback field:</p>
+      <div class="callout">
+        <strong><code>internal_error_type</code></strong> <em>(new, rev. 6)</em>: <code>string | null</code>, command level. Set only when <code>success: false</code> <strong>and</strong> no <code>providers[*][*]</code> entry recorded a fail — i.e. the failure wasn't caused by any vendor call (an internal bug, a bad user query, a local file error). <code>null</code> in every other case, including all <code>success: true</code> events. Exception type name only, never message text — same rule as <code>error_types</code>.
+      </div>
+
+      <h3>Updated examples</h3>
+      <pre><code>// MCP tool call: search (privacy_mode = "full", the default) — all vendor calls succeeded
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "search", "source": "mcp", "duration_ms": 842, "success": true,
+ "action": {"query": "explain indexing"},
+ "providers": {
+   "llm":       [{"provider": "anthropic", "model": "claude-...", "calls": 1, "fails": 0, "error_types": {}, "input_tokens": 900, "output_tokens": 210}],
+   "embedding": [{"provider": "voyageai", "model": "voyage-3", "calls": 1, "fails": 0, "error_types": {}, "input_tokens": 32}],
+   "reranker":  [{"provider": "voyageai", "model": "rerank-2", "calls": 1, "fails": 0, "error_types": {}}]
+ },
+ "internal_error_type": null}
+
+// CLI command: index — one embedding batch attempt failed and was retried, then succeeded
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "index", "source": "cli", "duration_ms": 612000, "success": true,
+ "action": {"mode": "initial", "file_count": 8500, "total_chunks": 340000},
+ "providers": {
+   "embedding": [{"provider": "voyageai", "model": "voyage-3", "calls": 1135, "fails": 1,
+                   "error_types": {"RateLimitError": 1}, "input_tokens": 41200000}]
+ },
+ "internal_error_type": null}
+
+// A command with a transient LLM failure that was retried (app-visible chokepoint invocations),
+// and one that ultimately failed
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Darwin", "chunkhound_version": "5.2.2",
+ "command": "code_research", "source": "mcp", "duration_ms": 15300, "success": false,
+ "action": {"question": "how does the compaction protocol work"},
+ "providers": {
+   "llm": [{"provider": "openai", "model": "gpt-4o", "calls": 4, "fails": 2,
+            "error_types": {"TimeoutError": 1, "ValueError": 1},
+            "input_tokens": 6200, "output_tokens": 1800}]
+ },
+ "internal_error_type": null}
+
+// A command that failed for a reason unrelated to any vendor call
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "search", "source": "cli", "duration_ms": 12, "success": false,
+ "action": {"query": "explain indexing"},
+ "providers": {},
+ "internal_error_type": "KeyError"}
+
+// search, git-history-scoped (--last-n / --commit-range / --commit-hash)
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "search", "source": "cli", "duration_ms": 610, "success": true,
+ "action": {"query": "explain indexing", "last_n_commits": 10},
+ "providers": {"embedding": [{"provider": "voyageai", "model": "voyage-3", "calls": 1, "fails": 0, "error_types": {}, "input_tokens": 14}]},
+ "internal_error_type": null}</code></pre>
+
+      <p><code>privacy_mode = "hashed"</code>/<code>"anonymous"</code> behave exactly as in rev. 5 — only the <code>user</code> field (and object key <code>&lt;privacy_id&gt;</code> segment) changes; none of the fields introduced in this revision are privacy-mode-dependent.</p>
+    </div>
+
+    <div class="section" id="part2">
+      <h2>Part 2 — Architecture Detail: <code>AnalyticsRecorder</code> API (full replacement)</h2>
+      <p>Replace the two rows below in the <code>AnalyticsRecorder</code> method table:</p>
+      <table>
+        <tr><th style="width:45%">Old (rev. 5)</th><th>New (rev. 6)</th></tr>
+        <tr>
+          <td><code class="diff-old" style="background:#fdecea;color:#c0392b;">record_provider_call(kind, provider, model, input_tokens=None, output_tokens=None, request_count=1) -&gt; None</code></td>
+          <td><code class="diff-new" style="background:#eafaf1;color:#1e7e46;">record_provider_call(kind, provider, model, success, error=None, input_tokens=None, output_tokens=None) -&gt; None</code></td>
+        </tr>
+        <tr>
+          <td><code style="background:#fdecea;color:#c0392b;">record_error(exc: Exception) -&gt; None</code> — adds the exception's type name to the current accumulator's error tally, without capturing the message text.</td>
+          <td><code style="background:#eafaf1;color:#1e7e46;">record_internal_error(exc: Exception) -&gt; None</code> — sets the current accumulator's <code>internal_error_type</code> to the exception's type name, without capturing message text. Only meaningful when no provider entry has recorded a fail; if one has, this is a no-op (a vendor-caused failure already explains it).</td>
+        </tr>
+      </table>
+
+      <h3><code>record_provider_call</code> semantics <em>(revised, rev. 6)</em></h3>
+      <p>Called <strong>once per application-visible attempt</strong> — every retry iteration in an app-level retry loop is its own call; a single LLM chokepoint invocation (whose SDK-internal retries, if any, are already resolved by the time it returns or raises) is also its own call. On the <code>(kind, provider, model)</code> accumulator group:</p>
+      <ul>
+        <li><code>calls</code> increments on every invocation regardless of <code>success</code>.</li>
+        <li><code>fails</code> increments only when <code>success=False</code>.</li>
+        <li>On failure, <code>error_types[type(error).__name__]</code> increments by 1 (<code>error</code> is required when <code>success=False</code>, ignored otherwise).</li>
+        <li>Token args are only meaningful on success and are ignored (left at their prior value) on failure.</li>
+      </ul>
+      <p>As before, if no accumulator is open the call is silently dropped rather than raised — every provider call is always triggered by some command.</p>
+
+      <h3><code>end_command(success: bool) -&gt; None</code></h3>
+      <p>Unchanged in shape, but now also computes <code>internal_error_type</code>: <code>null</code> unless <code>success=False</code> and every <code>providers[*][*].fails == 0</code>, in which case it takes whatever <code>record_internal_error</code> set (or stays <code>null</code> if nothing called it, e.g. an unclassified failure — an edge case this rev. doesn't attempt to close further).</p>
+    </div>
+
+    <div class="section" id="part3">
+      <h2>Part 3 — New subsection: Instrumentation placement per vendor</h2>
+      <p><em>(Insert after the <code>AnalyticsRecorder</code> method table in Architecture Detail.)</em></p>
+      <p>There is no single repo-wide chokepoint all three vendor kinds funnel through — each provider class has its own narrow per-attempt call site, and retry visibility differs by vendor kind:</p>
+      <table>
+        <tr><th style="width:14%">Vendor</th><th style="width:43%">Chokepoint(s)</th><th>Retry visibility</th></tr>
+        <tr>
+          <td>Embedding</td>
+          <td><code>chunkhound/providers/embeddings/openai_provider.py: _embed_batch_internal()</code>; <code>chunkhound/providers/embeddings/voyageai_provider.py: _embed_single_batch_locked()</code></td>
+          <td><strong>App-level.</strong> Each provider wraps its call in its own <code>for attempt in range(self._retry_attempts)</code> loop with rate-limit-aware backoff. <code>record_provider_call</code> fires once per loop iteration — every attempt, success or fail, is individually visible.</td>
+        </tr>
+        <tr>
+          <td>Reranker</td>
+          <td><code>openai_provider.py: _rerank_single_batch()</code>; <code>voyageai_provider.py: _rerank_via_sdk()</code> (SDK path) / <code>_rerank_http_batch()</code> (HTTP path, no retry at this layer — retries happen one level up via batch-splitting, which does not retry, only splits)</td>
+          <td><strong>App-level</strong> for the SDK path, matching embedding. The HTTP path's single-attempt chokepoint should still call <code>record_provider_call</code> per attempt; batch-splitting above it is a different concern (chunking work, not retrying a failed attempt) and isn't itself an instrumentation point.</td>
+        </tr>
+        <tr>
+          <td>LLM</td>
+          <td><code>chunkhound/providers/llm/anthropic_llm_provider.py: _create_message()</code>; <code>chunkhound/providers/llm/openai_compatible_provider.py</code>'s <code>chat.completions.create()</code> / <code>responses.create()</code> call sites</td>
+          <td><strong>SDK-internal.</strong> <code>max_retries</code> is passed directly into the SDK client constructor (<code>AsyncAnthropic(max_retries=...)</code>, <code>AsyncOpenAI(max_retries=...)</code>) — individual HTTP retry attempts happen inside the SDK/httpx transport and are invisible to application code. One <code>record_provider_call</code> fires per chokepoint invocation, reflecting an already-resolved result. This is coarser than embedding/reranker <strong>by design</strong> (see Part 2) — not a gap this rev. closes. A <code>calls</code> value like <code>4</code> for an LLM entry (as in the Part 1 example) reflects the app calling the chokepoint multiple times (e.g. a multi-hop research loop), not raw HTTP attempts.</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="section" id="part4">
+      <h2>Part 4 — Targeted edits</h2>
+
+      <h3>Testing section — add three contract tests</h3>
+      <ul>
+        <li><strong>Per-attempt fail accounting</strong>: <code>record_provider_call(success=False, error=exc)</code> increments <code>fails</code> and <code>error_types[type(exc).__name__]</code> on the correct <code>(kind, provider, model)</code> group without double-counting <code>calls</code> (i.e. <code>calls</code> increments exactly once per invocation regardless of <code>success</code>).</li>
+        <li><strong>Internal-error fallback exclusivity</strong>: a command ending <code>success=False</code> with at least one <code>providers[*][*].fails &gt; 0</code> leaves <code>internal_error_type == null</code>; a command ending <code>success=False</code> with <strong>no</strong> provider fails and a <code>record_internal_error(exc)</code> call sets <code>internal_error_type</code> to that exception's type name.</li>
+        <li><strong>Retry-loop integration test</strong>: point an embedding provider at an invalid endpoint for a bounded number of attempts; confirm the resulting <code>providers.embedding[0]</code> entry has <code>calls == fails == retry_attempts</code>, <code>error_types</code> populated, and no message text anywhere in the emitted event.</li>
+      </ul>
+
+      <h3>Revision header</h3>
+      <p>Bump <code>rev. 5</code> → <code>rev. 6</code> in the page header; append to the revision-history paragraph: rev. 6 adds per-vendor call/fail counts and a failure-type spread (<code>fails</code>, <code>error_types</code> per <code>providers[kind]</code> entry), replacing the command-level <code>errors</code> block with a narrow <code>internal_error_type</code> fallback for non-vendor-caused failures; documents the differing retry-visibility granularity between app-level-retrying providers (embedding, reranker) and SDK-internal-retrying providers (LLM).</p>
+    </div>
+
+    <footer>Per-Vendor Call/Error Metrics — Rev. 6 — 2026-08-27</footer>
+  </div>
+</div>
+</body>
+</html>

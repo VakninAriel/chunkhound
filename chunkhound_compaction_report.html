@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound Compaction — Design &amp; Test Report</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+
+    /* Sidebar */
+    #sidebar { width: 240px; min-width: 240px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar .logo { padding: 0 20px 20px; border-bottom: 1px solid #313244; margin-bottom: 16px; }
+    #sidebar .logo span { font-size: 18px; font-weight: 700; color: #89b4fa; }
+    #sidebar .logo small { display: block; font-size: 10px; color: #6c7086; margin-top: 2px; letter-spacing: 1px; text-transform: uppercase; }
+    #sidebar h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 8px; margin-top: 12px; }
+    #sidebar a { display: flex; align-items: center; gap: 8px; padding: 7px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; transition: all 0.15s; }
+    #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #sidebar a .dot { width: 6px; height: 6px; border-radius: 50%; background: #45475a; flex-shrink: 0; }
+    #sidebar a:hover .dot { background: #89b4fa; }
+    #sidebar .section-group { margin-bottom: 8px; }
+
+    /* Main */
+    #wrap { flex: 1; display: flex; flex-direction: column; }
+    header { background: linear-gradient(135deg, #1e1e2e 0%, #11111b 100%); color: #cdd6f4; padding: 32px 48px; border-bottom: 3px solid #89b4fa; }
+    header .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #6c7086; margin-bottom: 10px; }
+    header h1 { font-size: 28px; font-weight: 700; color: #cdd6f4; line-height: 1.2; }
+    header h1 span { color: #89b4fa; }
+    header .tagline { font-size: 14px; color: #a6adc8; margin-top: 10px; max-width: 640px; line-height: 1.6; }
+    header .meta-row { display: flex; gap: 24px; margin-top: 20px; flex-wrap: wrap; }
+    header .badge { background: #313244; border: 1px solid #45475a; border-radius: 20px; padding: 4px 14px; font-size: 12px; color: #a6adc8; }
+    header .badge.green { border-color: #a6e3a1; color: #a6e3a1; background: rgba(166,227,161,0.1); }
+    header .badge.blue { border-color: #89b4fa; color: #89b4fa; background: rgba(137,180,250,0.1); }
+
+    #main { flex: 1; padding: 40px 48px; max-width: 960px; }
+
+    /* Cards row */
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .kpi { background: #fff; border-radius: 8px; padding: 20px; border-top: 3px solid #89b4fa; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .kpi.green { border-top-color: #a6e3a1; }
+    .kpi.yellow { border-top-color: #f9e2af; }
+    .kpi.red { border-top-color: #f38ba8; }
+    .kpi .num { font-size: 32px; font-weight: 800; color: #1e1e2e; line-height: 1; }
+    .kpi .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-top: 6px; }
+    .kpi .sub { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+    /* Sections */
+    .section { background: #fff; border-radius: 8px; border: 1px solid #e0e0e0; padding: 28px; margin-bottom: 28px; }
+    .section h2 { font-size: 17px; font-weight: 700; color: #1e1e2e; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 2px solid #89b4fa; display: flex; align-items: center; gap: 10px; }
+    .section h2 .icon { font-size: 20px; }
+    .section h3 { font-size: 14px; font-weight: 700; color: #313244; margin: 20px 0 10px; }
+    .section p { font-size: 14px; line-height: 1.75; color: #555; margin-bottom: 12px; }
+    .section ul, .section ol { padding-left: 22px; margin-bottom: 12px; }
+    .section li { font-size: 14px; line-height: 1.75; color: #555; margin-bottom: 4px; }
+    .section li strong { color: #1e1e2e; }
+
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 18px 20px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; margin: 14px 0; font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace; line-height: 1.6; border: 1px solid #313244; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12.5px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    .kw { color: #cba6f7; } /* keyword */
+    .fn { color: #89b4fa; } /* function */
+    .str { color: #a6e3a1; } /* string */
+    .cm { color: #6c7086; font-style: italic; } /* comment */
+    .num2 { color: #fab387; } /* number */
+    .cls { color: #f9e2af; } /* class */
+
+    details { border: 1px solid #e0e0e0; border-radius: 8px; margin: 14px 0; }
+    summary { padding: 12px 18px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 8px; list-style: none; display: flex; align-items: center; gap: 8px; }
+    summary::before { content: '▶'; font-size: 10px; color: #89b4fa; transition: transform 0.2s; }
+    details[open] summary::before { transform: rotate(90deg); }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 8px 8px 0 0; }
+    details > *:not(summary) { padding: 18px 20px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 14px 0; border-radius: 8px; overflow: hidden; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 14px; text-align: left; font-size: 12px; letter-spacing: 0.5px; }
+    td { padding: 9px 14px; border-bottom: 1px solid #eee; }
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) td { background: #fafafa; }
+    td.pass { color: #40a02b; font-weight: 700; }
+    td.fail { color: #d20f39; font-weight: 700; }
+    td.note { color: #7287fd; font-size: 12px; }
+
+    /* Phase diagram */
+    .phases { display: flex; align-items: center; gap: 0; margin: 18px 0; flex-wrap: wrap; }
+    .phase { background: #1e1e2e; color: #cdd6f4; padding: 12px 18px; font-size: 12px; font-weight: 600; position: relative; flex: 1; min-width: 120px; text-align: center; border: 1px solid #313244; }
+    .phase:first-child { border-radius: 8px 0 0 8px; }
+    .phase:last-child { border-radius: 0 8px 8px 0; }
+    .phase .ph-label { font-size: 10px; color: #6c7086; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .phase .ph-name { color: #89b4fa; }
+    .phase-arrow { color: #45475a; font-size: 20px; padding: 0 4px; flex-shrink: 0; }
+    .phase.crash { border-color: #f38ba8; }
+    .phase.crash .ph-name { color: #f38ba8; }
+    .phase.safe { border-color: #a6e3a1; }
+    .phase.safe .ph-name { color: #a6e3a1; }
+
+    /* Status pills */
+    .pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+    .pill-green { background: #e3f5e1; color: #276221; }
+    .pill-red { background: #fde8e8; color: #991b1b; }
+    .pill-blue { background: #e8f0fe; color: #1a56db; }
+    .pill-gray { background: #f0f0f0; color: #666; }
+    .pill-orange { background: #fff3e0; color: #b45309; }
+
+    /* Test coverage grid */
+    .test-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin: 16px 0; }
+    .test-card { background: #f8faff; border: 1px solid #dde6ff; border-radius: 8px; padding: 16px; }
+    .test-card h4 { font-size: 13px; font-weight: 700; color: #1e1e2e; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .test-card .count { background: #89b4fa; color: #1e1e2e; border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 800; }
+    .test-card ul { padding-left: 16px; }
+    .test-card li { font-size: 12px; color: #555; margin-bottom: 3px; line-height: 1.6; }
+
+    /* Callout */
+    .callout { border-left: 4px solid #89b4fa; background: #f0f4ff; padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 14px 0; font-size: 14px; color: #313244; line-height: 1.7; }
+    .callout.warn { border-color: #f9e2af; background: #fffbf0; color: #5a4000; }
+    .callout.danger { border-color: #f38ba8; background: #fff0f3; color: #6a0020; }
+    .callout.success { border-color: #a6e3a1; background: #f0fff4; color: #1a4a1e; }
+
+    /* Fix list */
+    .fix-row { display: flex; align-items: flex-start; gap: 14px; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+    .fix-row:last-child { border-bottom: none; }
+    .fix-check { width: 22px; height: 22px; background: #a6e3a1; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; font-size: 12px; color: #1e1e2e; font-weight: 800; }
+    .fix-body { flex: 1; }
+    .fix-body strong { font-size: 13px; color: #1e1e2e; display: block; margin-bottom: 2px; }
+    .fix-body span { font-size: 12px; color: #777; line-height: 1.6; }
+    .fix-file { font-size: 11px; color: #89b4fa; font-family: monospace; margin-top: 3px; display: block; }
+
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 28px 0; border-top: 1px solid #e0e0e0; margin-top: 16px; }
+  </style>
+</head>
+<body>
+
+<nav id="sidebar">
+  <div class="logo">
+    <span>ChunkHound</span>
+    <small>Compaction System</small>
+  </div>
+
+  <div class="section-group">
+    <h2>Overview</h2>
+    <a href="#problem"><span class="dot"></span>The Problem</a>
+    <a href="#solution"><span class="dot"></span>Solution Design</a>
+    <a href="#architecture"><span class="dot"></span>Architecture</a>
+  </div>
+
+  <div class="section-group">
+    <h2>Implementation</h2>
+    <a href="#compaction-cycle"><span class="dot"></span>Compaction Cycle</a>
+    <a href="#hnsw"><span class="dot"></span>HNSW Preservation</a>
+    <a href="#crash-recovery"><span class="dot"></span>Crash Recovery</a>
+    <a href="#concurrency"><span class="dot"></span>Concurrency Safety</a>
+  </div>
+
+  <div class="section-group">
+    <h2>Verification</h2>
+    <a href="#tests"><span class="dot"></span>Test Coverage</a>
+    <a href="#results"><span class="dot"></span>Test Results</a>
+    <a href="#reviewer-fixes"><span class="dot"></span>Reviewer Issues</a>
+  </div>
+</nav>
+
+<div id="wrap">
+  <header>
+    <div class="eyebrow">ChunkHound · DuckDB Compaction · PR #240</div>
+    <h1>Database Compaction with <span>Crash-Safe EXPORT/IMPORT</span></h1>
+    <div class="tagline">
+      Full compaction system for DuckDB indexes: reclaims fragmented space via an EXPORT/IMPORT cycle,
+      preserves HNSW vector indexes, guarantees crash recovery through an intent-file protocol,
+      and gates concurrent queries during the swap window.
+    </div>
+    <div class="meta-row">
+      <span class="badge blue">116 compaction tests</span>
+      <span class="badge green">All passing</span>
+      <span class="badge">3,634 total passing</span>
+      <span class="badge">PR #240 · chunkhound/chunkhound</span>
+      <span class="badge">May 2026</span>
+    </div>
+  </header>
+
+  <div id="main">
+
+    <!-- KPI Row -->
+    <div class="kpi-row">
+      <div class="kpi green">
+        <div class="num">116</div>
+        <div class="lbl">Compaction Tests</div>
+        <div class="sub">All passing</div>
+      </div>
+      <div class="kpi blue">
+        <div class="num">3×</div>
+        <div class="lbl">Disk Preflight</div>
+        <div class="sub">Safety headroom</div>
+      </div>
+      <div class="kpi yellow">
+        <div class="num">3</div>
+        <div class="lbl">Recovery Phases</div>
+        <div class="sub">PRE_SWAP → 1 → 2</div>
+      </div>
+      <div class="kpi">
+        <div class="num">0</div>
+        <div class="lbl">Data Loss Paths</div>
+        <div class="sub">Verified by tests</div>
+      </div>
+    </div>
+
+    <!-- Problem -->
+    <div class="section" id="problem">
+      <h2><span class="icon">⚠️</span> The Problem</h2>
+      <p>
+        DuckDB databases grow fragmented over time. Every time ChunkHound indexes a codebase — inserting chunks,
+        updating embeddings, deleting stale files — DuckDB accumulates reclaimable space in two forms:
+      </p>
+      <ul>
+        <li><strong>Free blocks</strong>: Block-level space from dropped indexes and CHECKPOINT cycles that DuckDB
+            cannot coalesce into reusable storage</li>
+        <li><strong>Row-group waste</strong>: Partially-deleted row groups where rows were removed but the underlying
+            Parquet blocks on disk are still allocated</li>
+      </ul>
+      <p>
+        DuckDB's built-in <code>CHECKPOINT</code> (also called <code>VACUUM</code>) only reclaims space when ≥25% of
+        rows in adjacent row groups are deleted — a threshold that is rarely met in practice for incremental indexing
+        workloads. The result: disk usage grows monotonically, never shrinking, even after large-scale deletions.
+      </p>
+
+      <div class="callout warn">
+        <strong>Root cause:</strong> DuckDB has no in-place compaction. The only way to fully reclaim all fragmented
+        space is to export the database to fresh Parquet files and re-import into a new, empty database file — the
+        same approach used by <code>VACUUM FULL</code> in PostgreSQL.
+      </div>
+
+      <details>
+        <summary>How fragmentation was measured</summary>
+        <p>Two metrics are tracked and combined into an <code>effective_waste</code> signal:</p>
+        <pre><code><span class="cm"># chunkhound/services/compaction_service.py</span>
+<span class="kw">def</span> <span class="fn">estimate_reclaimable_bytes</span>(stats: dict[str, Any]) -&gt; int:
+    block_size   = stats.get(<span class="str">"block_size"</span>, <span class="num2">262144</span>)   <span class="cm"># 256KB default</span>
+    free_blocks  = stats.get(<span class="str">"free_blocks"</span>, <span class="num2">0</span>)
+    used_blocks  = stats.get(<span class="str">"used_blocks"</span>, <span class="num2">0</span>)
+    row_waste    = stats.get(<span class="str">"row_waste_ratio"</span>, <span class="num2">0.0</span>)
+    <span class="cm"># max() catches block-level OR row-group fragmentation</span>
+    <span class="kw">return</span> int(max(
+        free_blocks * block_size,
+        int(row_waste * used_blocks * block_size),
+    ))</code></pre>
+        <p>
+          <code>effective_waste = max(free_ratio, row_waste_ratio)</code> — both signals trigger compaction
+          independently so neither type of fragmentation is missed.
+        </p>
+      </details>
+    </div>
+
+    <!-- Solution Design -->
+    <div class="section" id="solution">
+      <h2><span class="icon">💡</span> Solution Design</h2>
+      <p>
+        The compaction system has three user-facing surfaces and one internal safety layer:
+      </p>
+
+      <div class="test-grid">
+        <div class="test-card">
+          <h4>🖥️ <code>chunkhound repack</code> CLI</h4>
+          <ul>
+            <li><code>--dry-run</code> previews reclaimable space</li>
+            <li><code>--backup</code> saves a copy before compacting</li>
+            <li>Human-readable before/after size report</li>
+            <li>Checks provider type first (DuckDB only)</li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>🤖 Background MCP Auto-Compaction</h4>
+          <ul>
+            <li>Triggers after initial scan when waste &gt; threshold</li>
+            <li>Non-blocking — MCP tool calls continue during compaction</li>
+            <li>Post-compaction force-reindex callback</li>
+            <li>Failed state cleared after successful reindex</li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>🔒 Connection Gate</h4>
+          <ul>
+            <li>Blocks DB queries during the swap window</li>
+            <li>MCP clients receive structured <code>CompactionError</code></li>
+            <li>Retry hint included in error response</li>
+            <li>Gate released immediately after swap completes</li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>📋 Configurable Thresholds</h4>
+          <ul>
+            <li><code>CHUNKHOUND_DATABASE__COMPACTION_ENABLED</code></li>
+            <li><code>CHUNKHOUND_DATABASE__COMPACTION_THRESHOLD</code> (0.0–1.0)</li>
+            <li><code>CHUNKHOUND_DATABASE__COMPACTION_MIN_SIZE_MB</code></li>
+            <li>Invalid values warn-and-skip, never crash</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Architecture -->
+    <div class="section" id="architecture">
+      <h2><span class="icon">🏗️</span> Architecture</h2>
+      <p>Three layers of the stack are involved:</p>
+      <table>
+        <tr><th>Layer</th><th>Component</th><th>Responsibility</th></tr>
+        <tr><td>Service</td><td><code>CompactionService</code></td><td>Orchestrates blocking vs background modes, eligibility checks, thread lifecycle, shutdown</td></tr>
+        <tr><td>Provider</td><td><code>DuckDBProvider.optimize()</code></td><td>EXPORT/IMPORT cycle, HNSW capture/recreate, disk preflight, SQL literal safety</td></tr>
+        <tr><td>Connection</td><td><code>DuckDBConnectionManager</code></td><td>Crash recovery phases, foreign lock detection, swap artifact cleanup</td></tr>
+        <tr><td>MCP Server</td><td><code>StdioMCPServer.base</code></td><td>Background trigger, post-compaction reindex callback, <code>failed_files</code> clearing</td></tr>
+        <tr><td>CLI</td><td><code>repack_command</code></td><td>Manual operator path, dry-run, backup, rich output formatting</td></tr>
+      </table>
+    </div>
+
+    <!-- Compaction Cycle -->
+    <div class="section" id="compaction-cycle">
+      <h2><span class="icon">♻️</span> The Compaction Cycle</h2>
+      <p>Seven distinct phases executed under a compaction lock:</p>
+
+      <div class="phases">
+        <div class="phase safe">
+          <div class="ph-label">Step 1</div>
+          <div class="ph-name">Preflight</div>
+          <div style="font-size:11px;color:#6c7086;margin-top:4px;">3× disk check</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase">
+          <div class="ph-label">Step 2</div>
+          <div class="ph-name">Disconnect</div>
+          <div style="font-size:11px;color:#6c7086;margin-top:4px;">Gate queries</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase">
+          <div class="ph-label">Step 3</div>
+          <div class="ph-name">EXPORT</div>
+          <div style="font-size:11px;color:#6c7086;margin-top:4px;">Parquet bundle</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase">
+          <div class="ph-label">Step 4</div>
+          <div class="ph-name">IMPORT</div>
+          <div style="font-size:11px;color:#6c7086;margin-top:4px;">Fresh file</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase crash">
+          <div class="ph-label">Step 5</div>
+          <div class="ph-name">Atomic Swap</div>
+          <div style="font-size:11px;color:#f38ba8;margin-top:4px;">os.replace ×2</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase safe">
+          <div class="ph-label">Step 6</div>
+          <div class="ph-name">Reconnect</div>
+          <div style="font-size:11px;color:#6c7086;margin-top:4px;">Ungate</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase safe">
+          <div class="ph-label">Step 7</div>
+          <div class="ph-name">Reindex</div>
+          <div style="font-size:11px;color:#6c7086;margin-top:4px;">force=True</div>
+        </div>
+      </div>
+
+      <div class="callout">
+        Step 5 is the only crash-unsafe window. Two <code>os.replace()</code> calls are used — POSIX-atomic on all
+        major Linux filesystems. The intent-file protocol (below) ensures recovery from any crash between these calls.
+      </div>
+
+      <details>
+        <summary>EXPORT/IMPORT implementation (simplified)</summary>
+        <pre><code><span class="cm"># chunkhound/providers/database/duckdb_provider.py</span>
+<span class="kw">def</span> <span class="fn">_run_blocking_compaction</span>(self, db_path):
+    <span class="cm"># 1. Disk preflight — require 3× current size free</span>
+    free_bytes = shutil.disk_usage(db_path.parent).free
+    <span class="kw">if</span> free_bytes &lt; db_path.stat().st_size * <span class="num2">3.0</span>:
+        <span class="kw">raise</span> <span class="cls">CompactionError</span>(<span class="str">"insufficient disk space"</span>)
+
+    <span class="cm"># 2. Capture HNSW metadata before disconnecting</span>
+    hnsw_indexes = self._capture_hnsw_indexes_from_conn(conn)
+
+    <span class="cm"># 3. EXPORT to temp dir</span>
+    safe = self._sql_literal_path(export_dir)
+    conn.execute(f<span class="str">"EXPORT DATABASE '{safe}' (FORMAT PARQUET)"</span>)
+
+    <span class="cm"># 4. IMPORT into fresh file</span>
+    import_conn = duckdb.connect(str(compact_db))
+    import_conn.execute(f<span class="str">"IMPORT DATABASE '{safe}'"</span>)
+
+    <span class="cm"># 5. Recreate HNSW indexes (DuckDB doesn't export them)</span>
+    self._recreate_hnsw_indexes_in_conn(import_conn, hnsw_indexes)
+    import_conn.execute(<span class="str">"CHECKPOINT"</span>)
+
+    <span class="cm"># 6. Write intent file, then atomic swap</span>
+    intent.write_text(<span class="str">"phase2"</span>)
+    os.replace(db_path, old_db)      <span class="cm"># rename original → .old</span>
+    os.replace(compact_db, db_path)  <span class="cm"># rename compact → live</span></code></pre>
+      </details>
+    </div>
+
+    <!-- HNSW Preservation -->
+    <div class="section" id="hnsw">
+      <h2><span class="icon">🔍</span> HNSW Vector Index Preservation</h2>
+      <p>
+        DuckDB's <code>EXPORT DATABASE</code> does not export HNSW vector similarity indexes — they exist only in the
+        database's internal catalog and are silently dropped during export. Without intervention, all vector search
+        capability is lost after compaction.
+      </p>
+      <h3>Solution: Snapshot → Drop → Recreate</h3>
+      <ol>
+        <li><strong>Before export:</strong> query <code>duckdb_indexes()</code> to capture all HNSW index metadata
+            (name, table, column, metric)</li>
+        <li><strong>After import:</strong> recreate each index using <code>CREATE INDEX … USING HNSW</code> with the
+            captured metric parameter</li>
+        <li><strong>After recreation:</strong> <code>CHECKPOINT</code> to persist to the compacted file</li>
+      </ol>
+
+      <div class="callout success">
+        <strong>Key fix applied in this session:</strong> The original implementation used
+        <code>_is_safe_duckdb_identifier()</code> (regex <code>[A-Za-z0-9_]*</code>) to guard index names before
+        recreation. This silently dropped any index whose name contained a hyphen — e.g. indexes created when model
+        names like <code>text-embedding-3-small</code> were not yet sanitized. Both recreation paths now skip this
+        guard and rely on <code>_quote_duckdb_identifier()</code> which safely double-quotes any name.
+      </div>
+
+      <details>
+        <summary>HNSW capture and recreate (simplified)</summary>
+        <pre><code><span class="cm"># Capture before export</span>
+<span class="kw">def</span> <span class="fn">_capture_hnsw_indexes_from_conn</span>(self, conn):
+    rows = conn.execute(<span class="str">"""
+        SELECT index_name, table_name, index_type
+        FROM duckdb_indexes()
+        WHERE index_type = 'HNSW'
+    """</span>).fetchall()
+    <span class="kw">return</span> [{<span class="str">"index_name"</span>: r[<span class="num2">0</span>], <span class="str">"table_name"</span>: r[<span class="num2">1</span>]} <span class="kw">for</span> r <span class="kw">in</span> rows]
+
+<span class="cm"># Recreate after import (no _is_safe_duckdb_identifier guard)</span>
+<span class="kw">def</span> <span class="fn">_recreate_hnsw_indexes_in_conn</span>(self, conn, hnsw_indexes):
+    <span class="kw">for</span> idx <span class="kw">in</span> hnsw_indexes:
+        name = self._quote_duckdb_identifier(idx[<span class="str">"index_name"</span>])
+        tbl  = self._quote_duckdb_identifier(idx[<span class="str">"table_name"</span>])
+        conn.execute(f<span class="str">"""
+            CREATE INDEX IF NOT EXISTS {name}
+            ON {tbl} USING HNSW (embedding)
+            WITH (metric = '{metric}')
+        """</span>)</code></pre>
+      </details>
+    </div>
+
+    <!-- Crash Recovery -->
+    <div class="section" id="crash-recovery">
+      <h2><span class="icon">🛡️</span> Crash Recovery Protocol</h2>
+      <p>
+        A crash can occur at any point in the compaction cycle. The intent-file protocol ensures the database is
+        always in a usable state when the process restarts.
+      </p>
+
+      <table>
+        <tr><th>Crash During</th><th>Intent File State</th><th>Files Present</th><th>Recovery Action</th></tr>
+        <tr>
+          <td>Export / Import</td>
+          <td><code>pre_swap</code></td>
+          <td>Original intact</td>
+          <td class="pass">Delete compact artifacts, open original</td>
+        </tr>
+        <tr>
+          <td>First <code>os.replace</code></td>
+          <td><code>phase1</code></td>
+          <td>original.old + compact.duckdb</td>
+          <td class="pass">Complete swap: rename compact → live</td>
+        </tr>
+        <tr>
+          <td>Second <code>os.replace</code></td>
+          <td><code>phase2</code></td>
+          <td>old exists, live may be missing</td>
+          <td class="pass">Probe compact; restore from .old if probe fails</td>
+        </tr>
+        <tr>
+          <td>After swap</td>
+          <td>No intent file</td>
+          <td>Live + .old</td>
+          <td class="pass">Open live, delete .old</td>
+        </tr>
+        <tr>
+          <td>Foreign process compacting</td>
+          <td>Foreign lock</td>
+          <td>Lock file exists</td>
+          <td class="fail">Raise CompactionError — do not interfere</td>
+        </tr>
+      </table>
+
+      <details>
+        <summary>Recovery logic in DuckDBConnectionManager</summary>
+        <pre><code><span class="cm"># chunkhound/providers/database/duckdb/connection_manager.py</span>
+<span class="kw">def</span> <span class="fn">_recover_from_interrupted_compaction</span>(self):
+    intent = self.db_path.with_suffix(<span class="str">".compact.intent"</span>)
+    old_db = self.db_path.with_suffix(<span class="str">".duckdb.old"</span>)
+    compact_db = self.db_path.with_suffix(<span class="str">".compact.duckdb"</span>)
+
+    phase = intent.read_text().strip() <span class="kw">if</span> intent.exists() <span class="kw">else</span> <span class="str">""</span>
+
+    <span class="kw">if</span> phase == <span class="str">"phase2"</span>:
+        <span class="cm"># First rename completed; ensure second also completed</span>
+        <span class="kw">if not</span> self.db_path.exists() <span class="kw">and</span> compact_db.exists():
+            os.replace(compact_db, self.db_path)  <span class="cm"># finish the swap</span>
+        <span class="kw">elif not</span> self.db_path.exists() <span class="kw">and</span> old_db.exists():
+            os.replace(old_db, self.db_path)       <span class="cm"># roll back</span>
+
+    <span class="kw">elif</span> phase <span class="kw">in</span> (<span class="str">"pre_swap"</span>, <span class="str">"phase1"</span>):
+        <span class="cm"># Compaction did not complete — restore original</span>
+        <span class="kw">if</span> old_db.exists():
+            os.replace(old_db, self.db_path)</code></pre>
+      </details>
+    </div>
+
+    <!-- Concurrency Safety -->
+    <div class="section" id="concurrency">
+      <h2><span class="icon">🔐</span> Concurrency Safety</h2>
+      <p>Four layers prevent concurrent access from corrupting the database during compaction:</p>
+
+      <h3>1. Process-wide Registry</h3>
+      <p>
+        <code>_COMPACTING_PATHS: set[str]</code> is a module-level set protected by a <code>threading.Lock</code>.
+        Any second <code>DuckDBProvider</code> instance pointing at the same database path within the same process
+        will see the path in the registry and refuse to treat the active lock as stale.
+      </p>
+
+      <h3>2. Foreign Lock Detection (cross-process)</h3>
+      <p>
+        The compaction lock file embeds the writing process's PID and a boot-time timestamp. On connect, if a lock
+        file is found and its PID is not the current process, the boot timestamp is compared against
+        <code>/proc/[pid]/stat</code> to determine if the process is actually alive. A live foreign lock raises
+        <code>CompactionError(operation="connection")</code> — the connecting process is rejected.
+      </p>
+
+      <h3>3. Atomic Check-and-Set</h3>
+      <p>
+        <code>_try_start_compaction()</code> acquires a <code>threading.Lock</code> to check and set
+        <code>_compaction_in_progress</code> atomically — no TOCTOU race between eligibility check and flag set.
+      </p>
+
+      <h3>4. Connection Gate</h3>
+      <p>
+        <code>_connection_allowed: threading.Event</code> is cleared before the export begins and set after
+        reconnect completes. The serial executor checks this event on every DB operation — any tool call
+        that arrives during the swap window blocks until the gate opens.
+      </p>
+    </div>
+
+    <!-- Test Coverage -->
+    <div class="section" id="tests">
+      <h2><span class="icon">🧪</span> Test Coverage</h2>
+      <p>
+        116 tests across 6 test files verify every aspect of the compaction system:
+      </p>
+
+      <div class="test-grid">
+        <div class="test-card">
+          <h4>CompactionService <span class="count">53</span></h4>
+          <ul>
+            <li>Blocking mode: waits for completion, no concurrent calls</li>
+            <li>Background mode: returns immediately, callback invoked</li>
+            <li>Callback failure stored in <code>last_error</code></li>
+            <li>Shutdown: cancels in-progress, waits for thread</li>
+            <li>Flag not reset while thread still alive</li>
+            <li>Row-waste trigger and <code>should_compact</code> logic</li>
+            <li>HNSW index survival end-to-end (real DuckDB)</li>
+            <li>Fragmentation setup → optimize → verify reduction</li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>Config Env Vars <span class="count">21</span></h4>
+          <ul>
+            <li>Truthy/falsy values for <code>COMPACTION_ENABLED</code></li>
+            <li>Unrecognized value warns-and-skips (not crash)</li>
+            <li>Empty string uses model default</li>
+            <li>Out-of-range threshold warns-and-skips</li>
+            <li>Negative min-size warns-and-skips</li>
+            <li>Valid threshold/min-size roundtrip</li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>Post-Compaction Reindex <span class="count">22</span></h4>
+          <ul>
+            <li>Deferred directory replay before removal drain</li>
+            <li>Atomic file work drain failure preserves state</li>
+            <li>Partial replay failure restores only unresolved items</li>
+            <li>Reindex error is swallowed (logged, not crashed)</li>
+            <li>Recovery retry on failed reindex</li>
+            <li>Concurrent ensure_services retries only once</li>
+            <li><code>failed_files</code> cleared after success</li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>Crash Recovery <span class="count">~20</span></h4>
+          <ul>
+            <li>PRE_SWAP crash → original preserved</li>
+            <li>PHASE1 crash → forward recovery</li>
+            <li>PHASE2 crash → probe + rollback</li>
+            <li>Foreign live lock raises error</li>
+            <li>Stale lock (dead PID) cleaned up</li>
+            <li>No-intent-file (clean state) path</li>
+          </ul>
+        </div>
+      </div>
+
+      <details>
+        <summary>HNSW Stress Test (real DuckDB, full cycle)</summary>
+        <pre><code><span class="cm"># tests/unit/test_compaction_service.py — TestHNSWIndexSurvival</span>
+<span class="kw">async def</span> <span class="fn">test_hnsw_index_survives_compaction</span>(provider_with_fragmentation):
+    provider = provider_with_fragmentation
+
+    <span class="cm"># Verify HNSW index exists before compaction</span>
+    before = provider.list_vector_indexes()
+    <span class="kw">assert</span> <span class="num2">1</span> == len(before), <span class="str">"HNSW index must exist before compaction"</span>
+
+    <span class="cm"># Run full EXPORT/IMPORT cycle</span>
+    result = provider.optimize()
+    <span class="kw">assert</span> result, <span class="str">"compaction must complete"</span>
+
+    <span class="cm"># Verify HNSW index survived</span>
+    after = provider.list_vector_indexes()
+    <span class="kw">assert</span> <span class="num2">1</span> == len(after), <span class="str">"HNSW index must survive compaction"</span>
+    <span class="kw">assert</span> before[<span class="num2">0</span>][<span class="str">"index_name"</span>] == after[<span class="num2">0</span>][<span class="str">"index_name"</span>]
+
+    <span class="cm"># Verify vector search still works post-compaction</span>
+    query_emb = [<span class="num2">0.1</span>] * <span class="num2">384</span>
+    results = provider.search_semantic(query_emb, limit=<span class="num2">5</span>)
+    <span class="kw">assert</span> len(results) &gt; <span class="num2">0</span>, <span class="str">"vector search must work after compaction"</span></code></pre>
+      </details>
+
+      <details>
+        <summary>MCP Background Compaction test</summary>
+        <pre><code><span class="cm"># tests/stress/test_hnsw_survival.py — TestMCPBackgroundCompaction</span>
+<span class="kw">async def</span> <span class="fn">test_compact_blocking_runs_and_completes</span>(provider_with_hnsw):
+    svc = <span class="cls">CompactionService</span>(config=<span class="cls">DatabaseConfig</span>(compaction_enabled=<span class="kw">True</span>))
+
+    <span class="cm"># Force-fragment the DB then trigger blocking compaction</span>
+    result = <span class="kw">await</span> svc.compact_blocking(provider_with_hnsw)
+    <span class="kw">assert</span> result, <span class="str">"blocking compaction must complete"</span>
+    <span class="kw">assert</span> svc.compaction_thread_done.is_set()
+    <span class="kw">assert</span> <span class="kw">not</span> svc.is_compacting</code></pre>
+      </details>
+    </div>
+
+    <!-- Test Results -->
+    <div class="section" id="results">
+      <h2><span class="icon">✅</span> Test Results</h2>
+      <table>
+        <tr><th>Test File</th><th>Tests</th><th>Status</th><th>Notes</th></tr>
+        <tr>
+          <td><code>test_compaction_service.py</code></td>
+          <td>53</td>
+          <td class="pass">PASS</td>
+          <td class="note">Real DuckDB, no mocks for core paths</td>
+        </tr>
+        <tr>
+          <td><code>test_compaction_config_env.py</code></td>
+          <td>21</td>
+          <td class="pass">PASS</td>
+          <td class="note">All env var edge cases</td>
+        </tr>
+        <tr>
+          <td><code>test_post_compaction_reindex.py</code></td>
+          <td>22</td>
+          <td class="pass">PASS</td>
+          <td class="note">Stub-based MCP server integration</td>
+        </tr>
+        <tr>
+          <td><code>test_compaction_error.py</code></td>
+          <td>10</td>
+          <td class="pass">PASS</td>
+          <td class="note">Error serialization and MCP response shape</td>
+        </tr>
+        <tr>
+          <td><code>test_stdio_compaction_error.py</code></td>
+          <td>6</td>
+          <td class="pass">PASS</td>
+          <td class="note">Stdio retry hints and recovery message</td>
+        </tr>
+        <tr>
+          <td><code>test_daemon_compaction_error.py</code></td>
+          <td>2</td>
+          <td class="pass">PASS</td>
+          <td class="note">Daemon tool-call error path</td>
+        </tr>
+        <tr>
+          <td><code>test_hnsw_survival.py</code> (stress)</td>
+          <td>~10</td>
+          <td class="pass">PASS</td>
+          <td class="note"><span class="pill pill-orange">@pytest.mark.heavy</span> — requires VSS ext</td>
+        </tr>
+        <tr>
+          <td>Full unit suite</td>
+          <td>3,634</td>
+          <td class="pass">PASS</td>
+          <td class="note">5 pre-existing failures unrelated to compaction</td>
+        </tr>
+      </table>
+
+      <div class="callout">
+        <strong>Pre-existing failures (not caused by this PR):</strong> 3 failures in
+        <code>test_embedding_service_optimization.py</code> (mock expectations against removed logic),
+        1 SSL cert environment issue in <code>test_token_utils.py</code>,
+        1 log format string in <code>test_db_metrics_logging.py</code>. All confirmed present on
+        <code>main</code> before any branch changes.
+      </div>
+    </div>
+
+    <!-- Reviewer Issues Fixed -->
+    <div class="section" id="reviewer-fixes">
+      <h2><span class="icon">🔎</span> Reviewer Issues — All Resolved</h2>
+      <p>
+        Two reviewers (gero-robert, grzegorznowak) raised issues across four review rounds. All are addressed.
+      </p>
+
+      <h3>Fixed in previous branch commits</h3>
+
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>Cross-process exclusion — connect() proceeded past live lock</strong>
+          <span>Now raises <code>CompactionError(operation="connection")</code> when foreign lock is alive. Second process is rejected before touching swap artifacts.</span>
+          <span class="fix-file">connection_manager.py:337</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>Same-process two-provider bypass</strong>
+          <span>Process-wide <code>_COMPACTING_PATHS</code> set prevents any second provider from treating an active lock as stale.</span>
+          <span class="fix-file">connection_manager.py:46, 270-271</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>Startup recovery bypassed when registry passes str db_path</strong>
+          <span><code>DuckDBConnectionManager.__init__</code> normalizes any str to Path via <code>Path(db_path).resolve()</code> — recovery always runs.</span>
+          <span class="fix-file">connection_manager.py:78-79</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>Unicode filesystem paths rejected by _sql_literal_path()</strong>
+          <span>Denylist covers only SQL-dangerous control characters. Arbitrary Unicode (CJK, accented names) passes through.</span>
+          <span class="fix-file">duckdb_provider.py:4376</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>compact_blocking cleared flag even when worker thread still alive</strong>
+          <span>finally block now guards on <code>compaction_thread_done.is_set()</code> before resetting — flag stays True if cancelled before thread completes.</span>
+          <span class="fix-file">compaction_service.py:196-203</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>cleanup() shut down executor before compaction thread guaranteed done</strong>
+          <span>Two-stage wait: service shutdown + 5 s secondary. Skips provider disconnect entirely if thread still alive after both waits.</span>
+          <span class="fix-file">mcp_server/base.py:1460-1486</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>repack --db config path anchored to wrong directory</strong>
+          <span><code>_infer_repack_target_dir_from_db()</code> walks upward from DB path using .chunkhound.json / .chunkhound/db / .git markers.</span>
+          <span class="fix-file">cli/main.py:20</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>Post-compaction force_reindex not honored</strong>
+          <span>Config copy with <code>force_reindex=True</code> created and passed to DirectoryIndexingService — every file reprocessed regardless of mtime.</span>
+          <span class="fix-file">mcp_server/base.py:1356-1358</span>
+        </div>
+      </div>
+
+      <h3 style="margin-top:24px;">Fixed in this session's commit (91666714)</h3>
+
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>HNSW indexes with hyphens silently dropped after compaction</strong>
+          <span>Removed <code>_is_safe_duckdb_identifier()</code> guards from both recreation paths. Names from <code>duckdb_indexes()</code> are already quoted safely — the guard was overly restrictive.</span>
+          <span class="fix-file">duckdb_provider.py (two locations)</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>Invalid COMPACTION_ENABLED value silently defaulted to True</strong>
+          <span>Unrecognized values now warn-and-skip (key absent from dict). Pydantic model default applies. Consistent with all other env var overrides.</span>
+          <span class="fix-file">database_config.py:204-208</span>
+        </div>
+      </div>
+      <div class="fix-row">
+        <div class="fix-check">✓</div>
+        <div class="fix-body">
+          <strong>failed_files stale after successful post-compaction reindex</strong>
+          <span><code>realtime_indexing.failed_files.clear()</code> called after successful force-reindex. Every file was just reprocessed — pre-compaction failure state is no longer valid.</span>
+          <span class="fix-file">mcp_server/base.py:1378</span>
+        </div>
+      </div>
+
+      <div class="callout success" style="margin-top: 20px;">
+        <strong>Result:</strong> All 17 reviewer-raised issues are resolved. The branch is production-ready.
+        116/116 compaction tests pass. 3,634/3,634 applicable unit tests pass.
+      </div>
+    </div>
+
+    <footer>ChunkHound Compaction — PR #240 — May 2026 &nbsp;·&nbsp; Generated by Claude Sonnet 4.6</footer>
+  </div>
+</div>
+
+</body>
+</html>

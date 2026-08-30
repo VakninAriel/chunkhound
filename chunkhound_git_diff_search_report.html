@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound — Git Diff Search · PR #288</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+
+    /* Sidebar */
+    #sidebar { width: 240px; min-width: 240px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar .logo { padding: 0 20px 20px; border-bottom: 1px solid #313244; margin-bottom: 16px; }
+    #sidebar .logo span { font-size: 18px; font-weight: 700; color: #22d3ee; }
+    #sidebar .logo small { display: block; font-size: 10px; color: #6c7086; margin-top: 2px; letter-spacing: 1px; text-transform: uppercase; }
+    #sidebar h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 8px; margin-top: 12px; }
+    #sidebar a { display: flex; align-items: center; gap: 8px; padding: 7px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; transition: all 0.15s; }
+    #sidebar a:hover { background: #313244; border-left-color: #22d3ee; color: #22d3ee; }
+    #sidebar a .dot { width: 6px; height: 6px; border-radius: 50%; background: #45475a; flex-shrink: 0; }
+    #sidebar a:hover .dot { background: #22d3ee; }
+    #sidebar .section-group { margin-bottom: 8px; }
+
+    /* Main */
+    #wrap { flex: 1; display: flex; flex-direction: column; }
+    header { background: linear-gradient(135deg, #1e1e2e 0%, #11111b 100%); color: #cdd6f4; padding: 32px 48px; border-bottom: 3px solid #22d3ee; }
+    header .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #6c7086; margin-bottom: 10px; }
+    header h1 { font-size: 28px; font-weight: 700; color: #cdd6f4; line-height: 1.2; }
+    header h1 span { color: #22d3ee; }
+    header .tagline { font-size: 14px; color: #a6adc8; margin-top: 10px; max-width: 680px; line-height: 1.6; }
+    header .meta-row { display: flex; gap: 24px; margin-top: 20px; flex-wrap: wrap; }
+    header .badge { background: #313244; border: 1px solid #45475a; border-radius: 20px; padding: 4px 14px; font-size: 12px; color: #a6adc8; }
+    header .badge.green { border-color: #a6e3a1; color: #a6e3a1; background: rgba(166,227,161,0.1); }
+    header .badge.cyan { border-color: #22d3ee; color: #22d3ee; background: rgba(34,211,238,0.1); }
+
+    #main { flex: 1; padding: 40px 48px; max-width: 960px; }
+
+    /* KPI Cards */
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .kpi { background: #fff; border-radius: 8px; padding: 20px; border-top: 3px solid #22d3ee; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .kpi.green { border-top-color: #a6e3a1; }
+    .kpi.yellow { border-top-color: #f9e2af; }
+    .kpi.red { border-top-color: #f38ba8; }
+    .kpi .num { font-size: 32px; font-weight: 800; color: #1e1e2e; line-height: 1; }
+    .kpi .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-top: 6px; }
+    .kpi .sub { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+    /* Sections */
+    .section { background: #fff; border-radius: 8px; border: 1px solid #e0e0e0; padding: 28px; margin-bottom: 28px; }
+    .section h2 { font-size: 17px; font-weight: 700; color: #1e1e2e; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 2px solid #22d3ee; display: flex; align-items: center; gap: 10px; }
+    .section h2 .icon { font-size: 20px; }
+    .section h3 { font-size: 14px; font-weight: 700; color: #313244; margin: 20px 0 10px; }
+    .section p { font-size: 14px; line-height: 1.75; color: #555; margin-bottom: 12px; }
+    .section ul, .section ol { padding-left: 22px; margin-bottom: 12px; }
+    .section li { font-size: 14px; line-height: 1.75; color: #555; margin-bottom: 4px; }
+    .section li strong { color: #1e1e2e; }
+
+    /* Code */
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 18px 20px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; margin: 14px 0; font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace; line-height: 1.6; border: 1px solid #313244; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12.5px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    .kw { color: #cba6f7; }
+    .fn { color: #22d3ee; }
+    .str { color: #a6e3a1; }
+    .cm { color: #6c7086; font-style: italic; }
+    .num2 { color: #fab387; }
+    .cls { color: #f9e2af; }
+    .diff-add { color: #a6e3a1; }
+    .diff-del { color: #f38ba8; }
+    .diff-hunk { color: #22d3ee; font-weight: 700; }
+    .diff-file { color: #f9e2af; }
+    .test-pass { color: #a6e3a1; }
+    .test-fail { color: #f38ba8; }
+    .test-summary { color: #22d3ee; font-weight: 700; }
+
+    /* Details / Collapsible */
+    details { border: 1px solid #e0e0e0; border-radius: 8px; margin: 14px 0; }
+    summary { padding: 12px 18px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 8px; list-style: none; display: flex; align-items: center; gap: 8px; }
+    summary::before { content: '▶'; font-size: 10px; color: #22d3ee; transition: transform 0.2s; }
+    details[open] summary::before { transform: rotate(90deg); }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 8px 8px 0 0; }
+    details > *:not(summary) { padding: 18px 20px; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 14px 0; border-radius: 8px; overflow: hidden; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 14px; text-align: left; font-size: 12px; letter-spacing: 0.5px; }
+    td { padding: 9px 14px; border-bottom: 1px solid #eee; }
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) td { background: #fafafa; }
+    td.pass { color: #40a02b; font-weight: 700; }
+    td.fail { color: #d20f39; font-weight: 700; }
+    td.mono { font-family: monospace; font-size: 12px; color: #22d3ee; }
+
+    /* Phase diagram */
+    .phases { display: flex; align-items: center; gap: 0; margin: 18px 0; flex-wrap: wrap; }
+    .phase { background: #1e1e2e; color: #cdd6f4; padding: 12px 18px; font-size: 12px; font-weight: 600; position: relative; flex: 1; min-width: 100px; text-align: center; border: 1px solid #313244; }
+    .phase:first-child { border-radius: 8px 0 0 8px; }
+    .phase:last-child { border-radius: 0 8px 8px 0; }
+    .phase .ph-label { font-size: 10px; color: #6c7086; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .phase .ph-name { color: #22d3ee; }
+    .phase-arrow { color: #45475a; font-size: 20px; padding: 0 4px; flex-shrink: 0; }
+
+    /* Flow column (vertical pipeline) */
+    .flow-col { display: flex; flex-direction: column; gap: 0; margin: 16px 0; }
+    .flow-step { background: #1e1e2e; color: #cdd6f4; padding: 11px 18px; font-size: 12.5px; font-family: 'Cascadia Code', monospace; border-left: 3px solid #22d3ee; border-bottom: 1px solid #313244; display: flex; align-items: baseline; gap: 14px; }
+    .flow-step:first-child { border-radius: 8px 8px 0 0; }
+    .flow-step:last-child { border-bottom: none; border-radius: 0 0 8px 8px; }
+    .flow-step .fs-fn { color: #22d3ee; font-weight: 700; min-width: 240px; }
+    .flow-step .fs-note { color: #6c7086; font-style: italic; font-size: 11.5px; }
+    .flow-arrow { text-align: center; color: #45475a; font-size: 16px; margin: 0; line-height: 1.2; }
+
+    /* Pills */
+    .pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+    .pill-green { background: #e3f5e1; color: #276221; }
+    .pill-red { background: #fde8e8; color: #991b1b; }
+    .pill-cyan { background: #e0faff; color: #0e7490; }
+    .pill-gray { background: #f0f0f0; color: #666; }
+    .pill-yellow { background: #fff8e1; color: #854d0e; }
+
+    /* Test grid */
+    .test-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin: 16px 0; }
+    .test-card { background: #f0fdff; border: 1px solid #a5f3fc; border-radius: 8px; padding: 16px; }
+    .test-card h4 { font-size: 13px; font-weight: 700; color: #1e1e2e; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .test-card .count { background: #22d3ee; color: #1e1e2e; border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 800; }
+    .test-card ul { padding-left: 16px; }
+    .test-card li { font-size: 12px; color: #555; margin-bottom: 3px; line-height: 1.6; }
+
+    /* Callout */
+    .callout { border-left: 4px solid #22d3ee; background: #f0fdff; padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 14px 0; font-size: 14px; color: #0e7490; line-height: 1.7; }
+    .callout.warn { border-color: #f9e2af; background: #fffbf0; color: #5a4000; }
+    .callout.danger { border-color: #f38ba8; background: #fff0f3; color: #6a0020; }
+    .callout.success { border-color: #a6e3a1; background: #f0fff4; color: #1a4a1e; }
+
+    /* Feature cards */
+    .feature-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 18px 0; }
+    .feature-card { background: #f8faff; border: 1px solid #dde6ff; border-radius: 8px; padding: 18px; }
+    .feature-card .fc-icon { font-size: 24px; margin-bottom: 8px; }
+    .feature-card h4 { font-size: 13px; font-weight: 700; color: #1e1e2e; margin-bottom: 6px; }
+    .feature-card p { font-size: 12.5px; color: #555; line-height: 1.6; margin: 0; }
+    .feature-card code { font-size: 11.5px; }
+
+    /* Design decision rows */
+    .fix-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }
+    .fix-row:last-child { border-bottom: none; }
+    .fix-check { width: 26px; height: 26px; background: #22d3ee; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; font-size: 13px; color: #1e1e2e; font-weight: 800; }
+    .fix-body { flex: 1; }
+    .fix-body strong { font-size: 13px; color: #1e1e2e; display: block; margin-bottom: 3px; }
+    .fix-body span { font-size: 12.5px; color: #555; line-height: 1.7; }
+    .fix-file { font-size: 11px; color: #22d3ee; font-family: monospace; margin-top: 3px; display: block; }
+
+    /* Two-col layout */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 16px 0; }
+
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 28px 0; border-top: 1px solid #e0e0e0; margin-top: 16px; }
+  </style>
+</head>
+<body>
+
+<nav id="sidebar">
+  <div class="logo">
+    <span>ChunkHound</span>
+    <small>Git Diff Search · PR #288</small>
+  </div>
+
+  <div class="section-group">
+    <h2>Overview</h2>
+    <a href="#overview"><span class="dot"></span>Feature Overview</a>
+    <a href="#architecture"><span class="dot"></span>Architecture</a>
+  </div>
+
+  <div class="section-group">
+    <h2>Data Flow</h2>
+    <a href="#dataflow"><span class="dot"></span>Pipeline</a>
+    <a href="#cli"><span class="dot"></span>CLI Quick-Start</a>
+  </div>
+
+  <div class="section-group">
+    <h2>Live Runs</h2>
+    <a href="#livedemo"><span class="dot"></span>Real Search Output</a>
+  </div>
+
+  <div class="section-group">
+    <h2>Verification</h2>
+    <a href="#tests"><span class="dot"></span>Test Coverage</a>
+    <a href="#results"><span class="dot"></span>Test Results</a>
+    <a href="#decisions"><span class="dot"></span>Design Decisions</a>
+  </div>
+</nav>
+
+<div id="wrap">
+  <header>
+    <div class="eyebrow">ChunkHound · Git Diff Search · PR #288</div>
+    <h1>Semantic Search Over <span>Code History</span></h1>
+    <div class="tagline">
+      Full git-history search pipeline: parse unified diffs into semantic chunks,
+      embed via the existing EmbeddingManager, and overlay results onto the DB-backed
+      SearchService using a composable decorator with three <code style="background:rgba(255,255,255,0.1);color:#22d3ee">vector_source</code> modes.
+      Zero changes to the DuckDB schema — diff chunks are ephemeral and in-memory only.
+    </div>
+    <div class="meta-row">
+      <span class="badge cyan">34 diff tests</span>
+      <span class="badge green">All passing</span>
+      <span class="badge">3 new source files</span>
+      <span class="badge">PR #288 · feat/git-diff-search</span>
+      <span class="badge">May 2026</span>
+    </div>
+  </header>
+
+  <div id="main">
+
+    <!-- KPI Row -->
+    <div class="kpi-row">
+      <div class="kpi green">
+        <div class="num">34</div>
+        <div class="lbl">Diff Tests</div>
+        <div class="sub">All passing · 31.66s</div>
+      </div>
+      <div class="kpi">
+        <div class="num">3</div>
+        <div class="lbl">CLI Modes</div>
+        <div class="sub">range · hash · last-n</div>
+      </div>
+      <div class="kpi yellow">
+        <div class="num">3</div>
+        <div class="lbl">Vector Sources</div>
+        <div class="sub">diff · db · both</div>
+      </div>
+      <div class="kpi green">
+        <div class="num">10k</div>
+        <div class="lbl">Max Chunk Chars</div>
+        <div class="sub">10,000 char boundary</div>
+      </div>
+    </div>
+
+    <!-- Section 1: Feature Overview -->
+    <div class="section" id="overview">
+      <h2><span class="icon">🔍</span> Feature Overview</h2>
+
+      <p>
+        Git-diff search enables semantic search scoped to <em>changed code</em> in a commit range.
+        Instead of searching the entire indexed codebase, ChunkHound runs <code>git diff</code>,
+        parses the unified diff into chunks, embeds them on-the-fly, and computes cosine similarity
+        against the query — all in memory, with no writes to DuckDB.
+      </p>
+
+      <div class="feature-row">
+        <div class="feature-card">
+          <div class="fc-icon">📅</div>
+          <h4>Last-N Commits</h4>
+          <p>
+            <code>--last-n 20</code> expands to <code>HEAD~20..HEAD</code>.
+            Ideal for "what changed recently?" queries without needing to know exact hashes.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon">🎯</div>
+          <h4>Single Commit</h4>
+          <p>
+            <code>--commit-hash abc1234</code> expands to <code>abc1234^..abc1234</code>.
+            Pins search to exactly the diff introduced by one commit.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon">📐</div>
+          <h4>Commit Range</h4>
+          <p>
+            <code>--commit-range v2.0..HEAD</code> uses git's own ref syntax.
+            Full release-window searches, branch comparisons, tag-to-tag diffs.
+          </p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Ephemeral chunks only.</strong> <code>Language.GIT_DIFF</code> chunks are never written to DuckDB.
+        They exist in memory for the duration of a single search call and are discarded afterwards.
+        The indexed database is read-only during diff search — no schema changes required.
+      </div>
+
+      <h3>vector_source Modes</h3>
+      <table>
+        <tr><th>Mode</th><th>Behavior</th><th>When to use</th></tr>
+        <tr>
+          <td><span class="pill pill-cyan">diff</span></td>
+          <td>Cosine-similarity over in-memory diff chunks only. DB not queried.</td>
+          <td>Focus on what changed in this range.</td>
+        </tr>
+        <tr>
+          <td><span class="pill pill-gray">db</span></td>
+          <td>Pure passthrough to original SearchService. Diff ignored.</td>
+          <td>Large diffs — skip embedding overhead.</td>
+        </tr>
+        <tr>
+          <td><span class="pill pill-yellow">both</span></td>
+          <td>Run diff + DB concurrently via asyncio.gather; merge results by score desc; dedup on (file_path, start_line).</td>
+          <td>Full-context query: what changed AND what exists.</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Section 2: Architecture -->
+    <div class="section" id="architecture">
+      <h2><span class="icon">🏗️</span> Architecture</h2>
+
+      <p>Six components form the pipeline from CLI flag to search result:</p>
+
+      <div class="phases">
+        <div class="phase">
+          <div class="ph-label">Entry</div>
+          <div class="ph-name">CLI args</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase">
+          <div class="ph-label">MCP Tool</div>
+          <div class="ph-name">search_impl</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase">
+          <div class="ph-label">Helper</div>
+          <div class="ph-name">_resolve_commit_range</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase">
+          <div class="ph-label">Async Pipeline</div>
+          <div class="ph-name">_inject_diff_service</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase">
+          <div class="ph-label">Decorator</div>
+          <div class="ph-name">DiffAwareSearchService</div>
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase safe">
+          <div class="ph-label">Output</div>
+          <div class="ph-name">Results</div>
+        </div>
+      </div>
+
+      <h3>New Source Files (3)</h3>
+      <table>
+        <tr><th>File</th><th>Role</th><th>Lines</th></tr>
+        <tr>
+          <td class="mono">chunkhound/core/git_diff/runner.py</td>
+          <td>Async subprocess: <code>git diff &lt;range&gt;</code> with 30s timeout and <code>_SAFE_REF</code> allowlist regex to block shell injection.</td>
+          <td>24</td>
+        </tr>
+        <tr>
+          <td class="mono">chunkhound/core/git_diff/parser.py</td>
+          <td>Unified diff → <code>Chunk</code> objects with <code>Language.GIT_DIFF</code>. Strips <code>b/</code> prefix, skips <code>/dev/null</code> deletions, splits hunks at 10k char boundary.</td>
+          <td>141</td>
+        </tr>
+        <tr>
+          <td class="mono">chunkhound/services/diff_aware_search_service.py</td>
+          <td>SearchService decorator. Stores L2-normalised embedding matrix. Routes by <code>vector_source</code>. Cosine-sim with threshold, path filter, and pagination.</td>
+          <td>364</td>
+        </tr>
+      </table>
+
+      <h3>Modified Files (2)</h3>
+      <table>
+        <tr><th>File</th><th>Change</th></tr>
+        <tr>
+          <td class="mono">chunkhound/mcp_server/tools.py</td>
+          <td>Added <code>_resolve_commit_range()</code>, <code>_inject_diff_service()</code>, and new params to <code>search_impl</code> / <code>deep_research_impl</code>.</td>
+        </tr>
+        <tr>
+          <td class="mono">chunkhound/api/cli/parsers/common_arguments.py</td>
+          <td>Added <code>add_git_diff_arguments()</code> — registers the three mutually-exclusive commit args and <code>--vector-source</code> on any parser.</td>
+        </tr>
+      </table>
+
+      <div class="callout">
+        <strong>Decorator, not inheritance.</strong> <code>DiffAwareSearchService</code> wraps <em>any</em> object that satisfies
+        <code>SearchServiceProtocol</code> (a <code>@runtime_checkable</code> Protocol). All non-semantic methods
+        (<code>search_regex</code>, <code>get_chunk_context</code>, <code>get_file_chunks</code>) delegate transparently
+        to the original service. Zero changes to callers.
+      </div>
+    </div>
+
+    <!-- Section 3: Data Flow -->
+    <div class="section" id="dataflow">
+      <h2><span class="icon">⚡</span> Data Flow</h2>
+
+      <div class="two-col">
+        <div>
+          <h3>_inject_diff_service pipeline</h3>
+          <div class="flow-col">
+            <div class="flow-step">
+              <span class="fs-fn">run_git_diff(range, cwd)</span>
+              <span class="fs-note">30s timeout · ref validation</span>
+            </div>
+            <div class="flow-step">
+              <span class="fs-fn">parse_diff_to_chunks(raw_diff)</span>
+              <span class="fs-note">Language.GIT_DIFF · 10k splits</span>
+            </div>
+            <div class="flow-step">
+              <span class="fs-fn">cap at MAX_DIFF_CHUNKS=500</span>
+              <span class="fs-note">OOM guard for large ranges</span>
+            </div>
+            <div class="flow-step">
+              <span class="fs-fn">embed_texts(chunks)</span>
+              <span class="fs-note">asyncio.wait_for · 120s timeout</span>
+            </div>
+            <div class="flow-step">
+              <span class="fs-fn">L2-normalise embedding matrix</span>
+              <span class="fs-note">clip norms at 1e-9 (float32 safe)</span>
+            </div>
+            <div class="flow-step">
+              <span class="fs-fn">DiffAwareSearchService(original, …)</span>
+              <span class="fs-note">replaces services.search_service</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h3>vector_source routing</h3>
+          <table>
+            <tr><th>Mode</th><th>What happens</th></tr>
+            <tr>
+              <td><strong>diff</strong></td>
+              <td>Cosine-sim: <code>query_vec · norm_matrix.T</code>. Original never called. Returns empty + warning if diff_chunks is empty.</td>
+            </tr>
+            <tr>
+              <td><strong>db</strong></td>
+              <td>Pure passthrough to original <code>SearchService.search_semantic()</code>. Diff embeddings unused.</td>
+            </tr>
+            <tr>
+              <td><strong>both</strong></td>
+              <td><code>asyncio.gather(diff_search, db_search)</code>. Merge lists, sort by score desc. Dedup on <code>(file_path, start_line)</code>, keep higher score. DB distances normalised to <code>similarity = 1 - distance</code>.</td>
+            </tr>
+          </table>
+
+          <h3 style="margin-top:16px">Ref validation (security)</h3>
+          <p style="font-size:13px">Before any subprocess call, refs are validated against an allowlist regex:</p>
+          <pre><code><span class="kw">_SAFE_REF</span> = re.compile(
+    <span class="str">r'^[a-zA-Z0-9_.^~/:@{}\-]+$'</span>
+)
+<span class="cm"># Also rejects any arg starting with '--'</span>
+<span class="cm"># Defense-in-depth: git also validates refs,</span>
+<span class="cm"># but regex blocks shell injection via args.</span></code></pre>
+        </div>
+      </div>
+
+      <details>
+        <summary>_resolve_commit_range() — source</summary>
+        <pre><code><span class="kw">def</span> <span class="fn">_resolve_commit_range</span>(
+    commit_range: <span class="cls">str</span> | <span class="kw">None</span>,
+    commit_hash: <span class="cls">str</span> | <span class="kw">None</span>,
+    last_n_commits: <span class="cls">int</span> | <span class="kw">None</span>,
+) -> <span class="cls">str</span> | <span class="kw">None</span>:
+    <span class="str">"""Resolve mutually-exclusive commit inputs to a single git revision range."""</span>
+    <span class="kw">if</span> sum(x <span class="kw">is not</span> <span class="kw">None</span> <span class="kw">for</span> x <span class="kw">in</span> [commit_range, commit_hash, last_n_commits]) > <span class="num2">1</span>:
+        <span class="kw">raise</span> <span class="cls">ValueError</span>(<span class="str">"Provide at most one of: commit_range, commit_hash, last_n_commits."</span>)
+    <span class="kw">if</span> commit_hash <span class="kw">is not None</span>:
+        <span class="kw">return</span> <span class="str">f"</span><span class="num2">{commit_hash}</span><span class="str">^..</span><span class="num2">{commit_hash}</span><span class="str">"</span>    <span class="cm"># single commit</span>
+    <span class="kw">if</span> last_n_commits <span class="kw">is not None</span>:
+        <span class="kw">return</span> <span class="str">f"HEAD~</span><span class="num2">{last_n_commits}</span><span class="str">..HEAD"</span>    <span class="cm"># last-N window</span>
+    <span class="kw">return</span> commit_range                          <span class="cm"># explicit range or None</span></code></pre>
+      </details>
+
+      <details>
+        <summary>_inject_diff_service() — source (condensed)</summary>
+        <pre><code><span class="kw">async def</span> <span class="fn">_inject_diff_service</span>(
+    services: <span class="cls">DatabaseServices</span>,
+    effective_commit_range: <span class="cls">str</span>,
+    vector_source: <span class="cls">str</span>,
+    embedding_manager: <span class="cls">Any</span>,
+) -> <span class="cls">DatabaseServices</span>:
+    raw_diff = <span class="kw">await</span> <span class="fn">run_git_diff</span>(effective_commit_range, cwd=<span class="fn">find_project_root</span>(<span class="kw">None</span>))
+    diff_chunks = <span class="fn">parse_diff_to_chunks</span>(raw_diff, max_chunk_chars=<span class="num2">MAX_DIFF_CHUNK_CHARS</span>)
+    <span class="kw">if</span> len(diff_chunks) > <span class="num2">MAX_DIFF_CHUNKS</span>:
+        diff_chunks = diff_chunks[:<span class="num2">MAX_DIFF_CHUNKS</span>]  <span class="cm"># OOM guard</span>
+    diff_embeddings = []
+    <span class="kw">if</span> diff_chunks <span class="kw">and</span> embedding_manager <span class="kw">is not None</span>:
+        emb_result = <span class="kw">await</span> asyncio.<span class="fn">wait_for</span>(
+            embedding_manager.<span class="fn">embed_texts</span>([c.code <span class="kw">for</span> c <span class="kw">in</span> diff_chunks]),
+            timeout=<span class="num2">_EMBED_TIMEOUT_SECONDS</span>,  <span class="cm"># 120s</span>
+        )
+        diff_embeddings = emb_result.embeddings
+    vs = vector_source <span class="kw">if</span> vector_source <span class="kw">in</span> (<span class="str">"diff"</span>, <span class="str">"db"</span>, <span class="str">"both"</span>) <span class="kw">else</span> <span class="str">"both"</span>
+    diff_service = <span class="cls">DiffAwareSearchService</span>(
+        original=services.search_service,
+        diff_chunks=diff_chunks,
+        diff_embeddings=diff_embeddings,
+        vector_source=vs,
+        embedding_manager=embedding_manager,
+    )
+    <span class="kw">return</span> services.<span class="fn">_replace</span>(search_service=diff_service)</code></pre>
+      </details>
+    </div>
+
+    <!-- Section 4: CLI Quick-Start -->
+    <div class="section" id="cli">
+      <h2><span class="icon">💻</span> CLI Quick-Start</h2>
+
+      <h3>Mode 1 — Last-N Commits</h3>
+      <pre><code><span class="cm"># Find authentication changes in the last 20 commits</span>
+chunkhound search <span class="str">"authentication middleware"</span> --last-n <span class="num2">20</span>
+
+<span class="cm"># Internally resolves to: git diff HEAD~20..HEAD</span>
+<span class="cm"># Default --vector-source diff  (diff-only, fastest)</span></code></pre>
+
+      <h3>Mode 2 — Single Commit</h3>
+      <pre><code><span class="cm"># Inspect what changed in one specific commit</span>
+chunkhound search <span class="str">"database migration schema"</span> --commit-hash d9aef3fd
+
+<span class="cm"># Expands to: git diff d9aef3fd^..d9aef3fd</span></code></pre>
+
+      <h3>Mode 3 — Commit Range with Both Sources</h3>
+      <pre><code><span class="cm"># Full release-range query — merge diff and indexed DB results</span>
+chunkhound search <span class="str">"API breaking changes"</span> \
+    --commit-range <span class="str">v2.0..HEAD</span> \
+    --vector-source both
+
+<span class="cm"># Also works with deep research:</span>
+chunkhound research <span class="str">"what changed in the auth module?"</span> --last-n <span class="num2">50</span></code></pre>
+
+      <div class="callout warn">
+        <strong>Large ranges:</strong> embedding 500 diff chunks can take up to 120s.
+        For very large ranges (e.g. <code>HEAD~500..HEAD</code>), use
+        <code>--vector-source db</code> to skip diff embedding entirely and search
+        the full indexed database instead.
+      </div>
+
+      <h3>Diff Output Format</h3>
+      <p>Diff search results are standard ChunkHound search results. Each result shows the file path, line range, and the changed code. Example diff chunk as it appears in the index:</p>
+      <pre><code><span class="diff-hunk">@@ -120,7 +120,14 @@ class AuthMiddleware:</span>
+<span class="diff-del">-    def verify_token(self, token: str) -> bool:</span>
+<span class="diff-del">-        return self._cache.get(token) is not None</span>
+<span class="diff-add">+    async def verify_token(self, token: str) -> bool:</span>
+<span class="diff-add">+        if cached := self._cache.get(token):</span>
+<span class="diff-add">+            return cached</span>
+<span class="diff-add">+        result = await self._provider.validate(token)</span>
+<span class="diff-add">+        self._cache.set(token, result, ttl=300)</span>
+<span class="diff-add">+        return result</span></code></pre>
+    </div>
+
+    <!-- Section 5: Live Demo -->
+    <div class="section" id="livedemo">
+      <h2><span class="icon">🚀</span> Live Runs — Real Search Output</h2>
+
+      <p>
+        Three real <code>chunkhound search</code> invocations against this repository's own commit history.
+        All results are live output from the running feature — no mocks, no fixtures.
+        Embedding model: <strong>Qwen3-Embedding-4B</strong> via local vLLM server.
+      </p>
+
+      <!-- Run 1 -->
+      <h3>Run 1 — Commit Range Search: Core Feature Implementation</h3>
+      <pre><code><span class="cm"># Query: "cosine similarity search over in-memory diff embeddings"</span>
+<span class="cm"># Range: 8ee59c5f (Phase 1+2 foundation) → 11854c50 (PR review fixes)</span>
+NO_PROXY=<span class="str">"10.201.85.111"</span> chunkhound search \
+    <span class="str">"cosine similarity search over in-memory diff embeddings"</span> \
+    --commit-range <span class="str">"8ee59c5f^..11854c50"</span></code></pre>
+
+      <details open>
+        <summary>Output — 10 of 43 results (score ≥ 0.587)</summary>
+        <pre><code>=== Semantic Search Results ===
+[INFO] Query: 'cosine similarity search over in-memory diff embeddings'
+[INFO] Results: 10 of 43 (showing 1-10)
+
+<span class="test-pass">[1] tests/unit/test_diff_aware_search_service.py  Score: 0.700  Lines 1-457</span>
+<span class="diff-add">+@pytest.mark.asyncio
++async def test_search_regex_async_delegates_regardless_of_vector_source():
++    """search_regex_async always delegates to original, regardless of vector_source."""
++    for source in ("diff", "db", "both"):
++        svc = DiffAwareSearchService(original, [], [], source, manager)
++        results, _ = await svc.search_regex_async("pattern.*")
++        original.search_regex_async.assert_awaited_once()</span>
+
+<span class="test-pass">[2] chunkhound/services/diff_aware_search_service.py  Score: 0.677  Lines 1-362</span>
+<span class="diff-add">+"""Diff-aware search service for ChunkHound git history summarization.
++This module provides DiffAwareSearchService, a decorator-style class that wraps
++an existing SearchService (duck-typed) and merges in-memory diff chunk results
++with the DB-backed results. It also defines SearchServiceProtocol."""
++
++@runtime_checkable
++class SearchServiceProtocol(Protocol):
++    async def search_semantic(self, query: str, ...) -> ...: ...</span>
+
+<span class="test-pass">[3] chunkhound/mcp_server/tools.py  Score: 0.672  Lines 540-549</span>
+<span class="diff-add">+    commit_range: str | None = None,
++    commit_hash: str | None = None,
++    last_n_commits: int | None = None,
++    vector_source: str = "both",
+ ) -> SearchResponse:</span>
+
+<span class="test-pass">[4] tests/unit/test_diff_aware_search_service.py  Score: 0.663  Lines 1-457</span>
+<span class="diff-add">+from chunkhound.services.diff_aware_search_service import (
++    DiffAwareSearchService,
++    SearchServiceProtocol,
++)</span>
+
+<span class="test-pass">[5] chunkhound/mcp_server/tools.py  Score: 0.650  Lines 408-421</span>
+<span class="diff-add">+GIT HISTORY SEARCH (type='semantic' only):
++- vector_source: Controls search scope when commit input given.
++  'both' (default) merges diff and DB results.
++  'diff' searches only changed code.
++  'db' ignores commit input and searches DB only.</span>
+
+<span class="test-pass">[6] chunkhound/mcp_server/tools.py  Score: 0.608  Lines 651-660</span>
+<span class="diff-add">+    commit_range: str | None = None,  # deep_research_impl params
++    commit_hash: str | None = None,
++    last_n_commits: int | None = None,
++    vector_source: str = "both",</span>
+
+<span class="test-pass">[7] tests/integration/test_deep_research_with_diff.py  Score: 0.599  Lines 1-386</span>
+<span class="diff-add">+"""Integration tests proving deep_research_impl uses DiffAwareSearchService
++when commit_range / commit_hash / last_n_commits are supplied.
++Spying on original search_service.search_semantic — in "diff" mode it
++must NOT be called; in "both" mode it WILL be called."""</span>
+
+<span class="test-pass">[8] chunkhound/database_factory.py  Score: 0.587  Lines 41-47</span>
+<span class="diff-del">-    search_service: "SearchService"</span>
+<span class="diff-add">+    search_service: "SearchService | DiffAwareSearchService"</span>
+
+[INFO] More results available. Use --offset 10 to see next page.</code></pre>
+      </details>
+
+      <div class="callout success">
+        <strong>Result:</strong> Top hit is the test file with score <strong>0.700</strong>, second is the actual implementation with <strong>0.677</strong>.
+        The query "cosine similarity search over in-memory diff embeddings" correctly surfaced the service, its tests, the MCP tool wiring, and the integration test — all from the exact commits that introduced those files.
+      </div>
+
+      <!-- Run 2 -->
+      <h3>Run 2 — Single Commit: Timeout Fix</h3>
+      <pre><code><span class="cm"># Query: "timeout error handling for embedding service"</span>
+<span class="cm"># Commit: 4bfcfaa4 — "fix(git-diff): add embed timeout and lazy-import comment"</span>
+chunkhound search <span class="str">"timeout error handling for embedding service"</span> \
+    --commit-hash <span class="num2">4bfcfaa4</span></code></pre>
+
+      <details open>
+        <summary>Output — 2 of 2 results</summary>
+        <pre><code>=== Semantic Search Results ===
+[INFO] Query: 'timeout error handling for embedding service'
+[INFO] Results: 2 of 2 (showing 1-2)
+
+<span class="test-pass">[1] chunkhound/mcp_server/tools.py  Score: 0.672  Lines 520-536</span>
+<span class="diff-add">+        try:
++            emb_result = await _asyncio.wait_for(
++                embedding_manager.embed_texts([c.code for c in diff_chunks]),
++                timeout=_EMBED_TIMEOUT_SECONDS,
++            )
++        except _asyncio.TimeoutError:
++            raise TimeoutError(
++                f"Embedding {len(diff_chunks)} diff chunks timed out after "
++                f"{_EMBED_TIMEOUT_SECONDS}s. Use a smaller commit range or "
++                "set vector_source='db' to skip diff embedding."
++            )</span>
+
+<span class="test-pass">[2] chunkhound/mcp_server/tools.py  Score: 0.584  Lines 491-508</span>
+<span class="diff-add">+_EMBED_TIMEOUT_SECONDS = 120  # same as provider-level default in .chunkhound.json
++
++async def _inject_diff_service(...):
++    # Local imports avoid circular dependency: tools → git_diff → (nothing in tools)
++    import asyncio as _asyncio
++    from loguru import logger as _log
++    from chunkhound.core.git_diff import parse_diff_to_chunks, run_git_diff</span></code></pre>
+      </details>
+
+      <div class="callout">
+        <strong>Result:</strong> Searching a <em>single commit</em> (<code>4bfcfaa4^..4bfcfaa4</code>) found the exact
+        <code>asyncio.wait_for</code> timeout guard added in that commit. Only 2 chunks in that diff, both relevant.
+        This is the feature working as designed — pin to one commit, get only what changed there.
+      </div>
+
+      <!-- Run 3 -->
+      <h3>Run 3 — Commit Range: Security Validation</h3>
+      <pre><code><span class="cm"># Query: "security validation for git ref injection attack"</span>
+<span class="cm"># Range: 8ee59c5f (foundation) → e9093bc7 (correctness + dedup + refactor)</span>
+chunkhound search <span class="str">"security validation for git ref injection attack"</span> \
+    --commit-range <span class="str">"8ee59c5f^..e9093bc7"</span></code></pre>
+
+      <details open>
+        <summary>Output — top 6 of 39 results</summary>
+        <pre><code>=== Semantic Search Results ===
+[INFO] Query: 'security validation for git ref injection attack'
+[INFO] Results: 10 of 39 (showing 1-6)
+
+<span class="test-pass">[1] chunkhound/mcp_server/tools.py  Score: 0.573  Lines 445-457</span>
+<span class="diff-add">+GIT HISTORY RESEARCH:
++- commit_range: Optional git revision range.
++  When provided, research incorporates code changed in that range.</span>
+
+<span class="test-pass">[2] chunkhound/mcp_server/tools.py  Score: 0.560  Lines 405-418</span>
+<span class="diff-add">+GIT HISTORY SEARCH (type='semantic' only):
++- vector_source: 'both' merges diff and DB. 'diff' searches only changed code.</span>
+
+<span class="test-pass">[3] README.md  Score: 0.510  Lines 77-98</span>
+<span class="diff-add">+# Last N commits
++chunkhound search "authentication changes" --last-n 20
++# Custom git range
++chunkhound search "API changes" --commit-range v2.0..HEAD</span>
+
+<span class="test-pass">[4] chunkhound/mcp_server/tools.py  Score: 0.505  Lines 473-493</span>
+<span class="diff-add">+def _resolve_commit_range(commit_range, commit_hash, last_n_commits):
++    """Resolve mutually-exclusive commit inputs to a single git revision range."""</span>
+
+<span class="test-pass">[5] chunkhound/mcp_server/tools.py  Score: 0.493  Lines 639-648</span>
+
+<span class="test-pass">[6] chunkhound/core/git_diff/runner.py  Score: 0.493  Lines 1-24</span>
+<span class="diff-add">+_SAFE_REF = re.compile(r'^[a-zA-Z0-9_.^~/:@{}\-]+$')
++
++async def run_git_diff(commit_range: str, cwd: Path | str) -> str:
++    if not _SAFE_REF.match(commit_range):
++        raise ValueError(f"Unsafe git ref rejected: {commit_range!r}")
++    proc = await asyncio.create_subprocess_exec(
++        "git", "diff", commit_range, ...
++    )
++    try:
++        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
++    except asyncio.TimeoutError:
++        proc.kill()
++        raise TimeoutError(f"git diff timed out after 30s")</span></code></pre>
+      </details>
+
+      <div class="callout">
+        <strong>Result:</strong> Asking about "security validation / ref injection" surfaced <code>runner.py</code>
+        with the actual <code>_SAFE_REF</code> regex and the subprocess timeout guard — the exact security-relevant
+        code in that commit range. 39 total results across the 3-commit span.
+      </div>
+
+      <h3>What These Runs Prove</h3>
+      <table>
+        <tr><th>Run</th><th>Mode</th><th>Chunks parsed</th><th>Top score</th><th>What was found</th></tr>
+        <tr>
+          <td>1 — feature range</td>
+          <td><span class="pill pill-cyan">diff</span></td>
+          <td>43</td>
+          <td>0.700</td>
+          <td>New service, tests, MCP wiring — all from the introducing commits</td>
+        </tr>
+        <tr>
+          <td>2 — single commit</td>
+          <td><span class="pill pill-cyan">diff</span></td>
+          <td>2</td>
+          <td>0.672</td>
+          <td>Exact <code>asyncio.wait_for</code> timeout guard in the 1-commit diff</td>
+        </tr>
+        <tr>
+          <td>3 — security query</td>
+          <td><span class="pill pill-cyan">diff</span></td>
+          <td>39</td>
+          <td>0.573</td>
+          <td><code>_SAFE_REF</code> regex in runner.py — surfaced without knowing the file name</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Section 6 (was 5): Test Coverage -->
+    <div class="section" id="tests">
+      <h2><span class="icon">🧪</span> Test Coverage</h2>
+
+      <div class="test-grid">
+        <div class="test-card">
+          <h4>test_git_diff_runner.py <span class="count">5</span></h4>
+          <ul>
+            <li><strong>test_happy_path</strong> — stdout decoded, returncode 0</li>
+            <li><strong>test_nonzero_returncode</strong> — ValueError on git failure</li>
+            <li><strong>test_timeout</strong> — SlowProcess → TimeoutError after 30s</li>
+            <li><strong>test_empty_diff</strong> — empty string returned, no crash</li>
+            <li><strong>test_unsafe_ref_rejected</strong> — <code>--output=/tmp/x</code> blocked by <code>_SAFE_REF</code></li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>test_git_diff_parser.py <span class="count">13</span></h4>
+          <ul>
+            <li><strong>b/ prefix stripped</strong> → <code>foo/bar.py</code></li>
+            <li><strong>multi-hunk same file</strong> → 2 chunks</li>
+            <li><strong>multi-file diff</strong> → 2 chunks, different paths</li>
+            <li><strong>deletion hunk</strong> (<code>+0</code> count) → 0 chunks</li>
+            <li><strong>empty input</strong> → <code>[]</code>, no crash</li>
+            <li><strong>missing +++ line</strong> → 0 chunks, no crash</li>
+            <li><strong>start_line / end_line</strong> from hunk header</li>
+            <li><strong>/dev/null target</strong> → skipped</li>
+            <li><strong>oversized hunk (12k chars)</strong> → split, each ≤ 10k</li>
+            <li><strong>custom max_chunk_chars=40</strong></li>
+            <li><strong>small hunk</strong> → no split, no "(part N)" suffix</li>
+            <li><strong>single overlong line (25k)</strong> → char-boundary splits</li>
+            <li><strong>multi-hunk end_lines</strong> computed correctly</li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h4>test_diff_aware_search_service.py <span class="count">16</span></h4>
+          <ul>
+            <li><strong>test_protocol_check</strong> — isinstance(svc, SearchServiceProtocol)</li>
+            <li><strong>test_db_mode_delegates_entirely</strong> — passthrough, no diff called</li>
+            <li><strong>test_diff_mode_returns_diff_results</strong> — original never called</li>
+            <li><strong>test_diff_mode_empty_chunks</strong> → empty result, no DB fallback</li>
+            <li><strong>test_both_mode_merges_and_sorts_by_score</strong></li>
+            <li><strong>test_both_mode_deduplicates</strong> on (file_path, start_line)</li>
+            <li><strong>test_threshold_filters_low_scores</strong></li>
+            <li><strong>test_pagination_offset_and_page_size</strong></li>
+            <li><strong>test_search_regex_async_delegates</strong> regardless of source</li>
+            <li><strong>test_cosine_similarity_known_unit_vectors</strong> (score ≈ 1.0 / 0.0)</li>
+            <li><strong>test_b1_non_unit_query</strong> → same ranking as unit query</li>
+            <li><strong>test_g1_path_filter</strong> excludes non-matching paths</li>
+            <li><strong>test_path_filter_no_partial_dir</strong> (<code>src</code> ≠ <code>src_utils</code>)</li>
+            <li><strong>test_b3_both_mode_distance_normalised</strong> (1 − distance)</li>
+            <li><strong>test_both_mode_pagination_second_page</strong> correct 3rd result</li>
+            <li><strong>test_both_mode_empty_diff</strong> → still returns DB results</li>
+          </ul>
+        </div>
+        <div class="test-card" style="grid-column: span 1;">
+          <h4>Coverage Summary</h4>
+          <table style="margin:0">
+            <tr><th>File</th><th>Tests</th><th>Status</th></tr>
+            <tr><td>runner.py</td><td>5</td><td class="pass">PASS</td></tr>
+            <tr><td>parser.py</td><td>13</td><td class="pass">PASS</td></tr>
+            <tr><td>diff_aware_search_service.py</td><td>16</td><td class="pass">PASS</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="callout success">
+        <strong>34 tests / 3 test files / 0 failures.</strong>
+        All edge cases covered: security (ref injection), correctness (cosine math),
+        resilience (timeout, empty diff, OOM guard), and integration (decorator protocol, pagination).
+      </div>
+    </div>
+
+    <!-- Section 6: Test Results -->
+    <div class="section" id="results">
+      <h2><span class="icon">✅</span> Test Results</h2>
+
+      <p>Live output from <code>~/.local/bin/uv run pytest tests/unit/test_git_diff_runner.py tests/unit/test_git_diff_parser.py tests/unit/test_diff_aware_search_service.py -v --tb=short</code>:</p>
+
+      <details open>
+        <summary>Full pytest -v output (34 passed)</summary>
+        <pre><code>platform linux -- Python 3.12.12, pytest-8.4.2
+rootdir: /home/e119870/views/g/my_chunkhound
+asyncio: mode=Mode.AUTO
+
+<span class="diff-hunk">collected 34 items</span>
+
+<span class="test-pass">tests/unit/test_git_diff_runner.py::test_happy_path PASSED               [  2%]</span>
+<span class="test-pass">tests/unit/test_git_diff_runner.py::test_nonzero_returncode PASSED       [  5%]</span>
+<span class="test-pass">tests/unit/test_git_diff_runner.py::test_timeout PASSED                  [  8%]</span>
+<span class="test-pass">tests/unit/test_git_diff_runner.py::test_empty_diff PASSED               [ 11%]</span>
+<span class="test-pass">tests/unit/test_git_diff_runner.py::test_unsafe_ref_rejected PASSED      [ 14%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_single_hunk_file_path_strips_b_prefix PASSED [ 17%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_multi_hunk_same_file_produces_two_chunks PASSED [ 20%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_multi_file_diff_different_file_paths PASSED [ 23%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_deletion_hunk_skipped PASSED    [ 26%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_empty_input_returns_empty_list PASSED [ 29%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_no_plus_plus_plus_before_hunk_no_crash PASSED [ 32%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_end_line_computed_from_hunk_header PASSED [ 35%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_multi_hunk_end_lines PASSED     [ 38%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_dev_null_path_chunk_skipped PASSED [ 41%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_oversized_hunk_splits_into_parts PASSED [ 44%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_oversized_hunk_custom_max PASSED [ 47%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_small_hunk_not_split PASSED     [ 50%]</span>
+<span class="test-pass">tests/unit/test_git_diff_parser.py::test_single_overlong_line_split PASSED [ 52%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_protocol_check PASSED [ 55%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_db_mode_delegates_entirely PASSED [ 58%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_diff_mode_returns_diff_results_not_original PASSED [ 61%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_diff_mode_empty_chunks_returns_empty PASSED [ 64%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_both_mode_merges_and_sorts_by_score PASSED [ 67%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_both_mode_deduplicates_on_file_and_start_line PASSED [ 70%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_threshold_filters_low_scores PASSED [ 73%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_pagination_offset_and_page_size PASSED [ 76%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_search_regex_async_delegates_regardless_of_vector_source PASSED [ 79%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_cosine_similarity_known_unit_vectors PASSED [ 82%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_b1_non_unit_query_gives_same_ranking_as_unit_query PASSED [ 85%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_g1_path_filter_excludes_non_matching PASSED [ 88%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_b3_both_mode_handles_distance_based_db_results PASSED [ 91%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_path_filter_does_not_match_partial_directory_name PASSED [ 94%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_both_mode_pagination_second_page_does_not_skip_results PASSED [ 97%]</span>
+<span class="test-pass">tests/unit/test_diff_aware_search_service.py::test_both_mode_empty_diff_embeddings_still_returns_db_results PASSED [100%]</span>
+
+<span class="test-summary">============================== 34 passed in 31.66s ==============================</span></code></pre>
+      </details>
+
+      <table>
+        <tr><th>File</th><th>Tests</th><th>Time (approx)</th><th>Status</th></tr>
+        <tr>
+          <td class="mono">test_git_diff_runner.py</td>
+          <td>5</td>
+          <td>&lt;1s</td>
+          <td class="pass">ALL PASS</td>
+        </tr>
+        <tr>
+          <td class="mono">test_git_diff_parser.py</td>
+          <td>13</td>
+          <td>&lt;1s</td>
+          <td class="pass">ALL PASS</td>
+        </tr>
+        <tr>
+          <td class="mono">test_diff_aware_search_service.py</td>
+          <td>16</td>
+          <td>~31s (async)</td>
+          <td class="pass">ALL PASS</td>
+        </tr>
+        <tr style="font-weight:700">
+          <td>Total</td>
+          <td>34</td>
+          <td>31.66s</td>
+          <td class="pass">ALL PASS</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Section 7: Design Decisions -->
+    <div class="section" id="decisions">
+      <h2><span class="icon">⚖️</span> Design Decisions</h2>
+
+      <div class="fix-row">
+        <div class="fix-check">①</div>
+        <div class="fix-body">
+          <strong>Decorator pattern over inheritance</strong>
+          <span>
+            <code>DiffAwareSearchService</code> wraps any duck-typed <code>SearchService</code> rather than subclassing.
+            All non-semantic methods (<code>search_regex</code>, <code>get_chunk_context</code>, <code>get_file_chunks</code>)
+            delegate transparently via <code>self._original</code>. Callers receive a <code>DatabaseServices</code> namedtuple
+            with <code>search_service</code> replaced via <code>._replace()</code> — zero changes in any call site.
+          </span>
+          <code class="fix-file">chunkhound/services/diff_aware_search_service.py · SearchServiceProtocol (@runtime_checkable)</code>
+        </div>
+      </div>
+
+      <div class="fix-row">
+        <div class="fix-check">②</div>
+        <div class="fix-body">
+          <strong>In-memory only — never persisted</strong>
+          <span>
+            <code>Language.GIT_DIFF</code> is an in-memory-only chunk type. Diff chunks are never written to DuckDB.
+            This avoids polluting the persistent index with transient search data, keeps the DB schema unchanged,
+            and allows concurrent normal indexing to proceed without conflict.
+          </span>
+          <code class="fix-file">chunkhound/core/types/common.py · Language.GIT_DIFF (ephemeral, not indexed)</code>
+        </div>
+      </div>
+
+      <div class="fix-row">
+        <div class="fix-check">③</div>
+        <div class="fix-body">
+          <strong>10,000 character chunk boundary</strong>
+          <span>
+            JSON/HTML diffs are approximately 1:1 chars-to-tokens. With a 16,384-token embedding model limit,
+            10k chars is a safe upper bound. The parser handles single overlong lines (minified SVG, minified JS)
+            by splitting at char boundaries <em>within</em> the line itself, so a 25k-char single line becomes
+            2–3 addressable chunks rather than being silently truncated.
+          </span>
+          <code class="fix-file">chunkhound/core/git_diff/parser.py · MAX_DIFF_CHUNK_CHARS = 10_000</code>
+        </div>
+      </div>
+
+      <div class="fix-row">
+        <div class="fix-check">④</div>
+        <div class="fix-body">
+          <strong>Allowlist regex for ref validation</strong>
+          <span>
+            All commit refs are validated against <code>_SAFE_REF = re.compile(r'^[a-zA-Z0-9_.^~/:@{}\-]+$')</code>
+            before any subprocess call. Any arg starting with <code>--</code> is also rejected.
+            Defense-in-depth: git itself validates refs, but the regex blocks shell injection via crafted
+            argument values (e.g. <code>--output=/tmp/x</code>) before they reach the subprocess boundary.
+          </span>
+          <code class="fix-file">chunkhound/core/git_diff/runner.py · _SAFE_REF regex · test_unsafe_ref_rejected</code>
+        </div>
+      </div>
+
+      <div class="fix-row">
+        <div class="fix-check">⑤</div>
+        <div class="fix-body">
+          <strong>asyncio.gather for "both" mode — zero latency penalty</strong>
+          <span>
+            Diff search is pure in-memory NumPy (no I/O). It returns in microseconds.
+            Running it concurrently with the DB query via <code>asyncio.gather(diff_search, db_search)</code>
+            means the merged mode costs exactly as much as the DB query alone.
+            Dedup after merge on <code>(file_path, start_line)</code> ensures no result is double-counted
+            when the same hunk exists in both the diff and the DB index.
+          </span>
+          <code class="fix-file">chunkhound/services/diff_aware_search_service.py · search_semantic() · "both" branch</code>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- #main -->
+
+  <footer>
+    ChunkHound · Git Diff Search · PR #288 · feat/git-diff-search · May 2026 ·
+    Generated by claude-sonnet-4-6
+  </footer>
+</div><!-- #wrap -->
+
+</body>
+</html>

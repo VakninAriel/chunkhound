@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review — PR #392 — HNSW usage fix</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #1a1d27;
+    --panel-2: #20242f;
+    --border: #2d3340;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --accent: #4299e1;
+    --critical: #f56565;
+    --high: #ed8936;
+    --medium: #ecc94b;
+    --minor: #48bb78;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding-bottom: 70px;
+  }
+  .container { max-width: 980px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  header.page-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.5rem;
+    margin-bottom: 2rem;
+  }
+  header.page-header h1 { font-size: 1.5rem; margin: 0 0 .5rem; color: #fff; }
+  .pr-meta { color: var(--text-dim); font-size: .92rem; display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: .6rem; }
+  .pr-meta span strong { color: var(--text); }
+  .branch-flow { font-family: 'SF Mono', Consolas, monospace; background: var(--panel-2); padding: .15rem .5rem; border-radius: 4px; }
+  .toc {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 2rem;
+    font-size: .9rem;
+  }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ul { margin: .5rem 0 0; padding-left: 1.2rem; }
+
+  section { margin-bottom: 2.5rem; }
+  h2 { font-size: 1.15rem; color: #fff; border-left: 3px solid var(--accent); padding-left: .6rem; margin-bottom: 1rem; }
+
+  .verdict-banner {
+    background: linear-gradient(135deg, #2d2410, #1a1d27);
+    border: 1px solid #ecc94b55;
+    border-radius: 10px;
+    padding: 1.1rem 1.5rem;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+  }
+  .verdict-banner strong { font-size: 1.15rem; }
+
+  table.summary { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
+  table.summary th, table.summary td { padding: .7rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+  table.summary th { background: var(--panel-2); color: var(--text-dim); font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; }
+  table.summary tr:last-child td { border-bottom: none; }
+
+  .badge {
+    display: inline-block;
+    padding: .15rem .55rem;
+    border-radius: 5px;
+    font-size: .78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  .badge-critical { background: #f5656522; color: var(--critical); border: 1px solid #f5656555; }
+  .badge-high { background: #ed893622; color: var(--high); border: 1px solid #ed893655; }
+  .badge-medium { background: #ecc94b22; color: var(--medium); border: 1px solid #ecc94b55; }
+  .badge-minor { background: #48bb7822; color: var(--minor); border: 1px solid #48bb7855; }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--medium);
+    border-radius: 8px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 1rem;
+    transition: opacity .15s;
+  }
+  .finding.sev-minor { border-left-color: var(--minor); }
+  .finding-header { display: flex; align-items: flex-start; gap: .7rem; margin-bottom: .5rem; }
+  .finding-title { font-weight: 600; color: #fff; font-size: 1rem; flex: 1; }
+  .finding-loc { font-family: 'SF Mono', Consolas, monospace; color: var(--accent); font-size: .85rem; display: block; margin-bottom: .5rem; }
+  .finding-desc { color: var(--text-dim); font-size: .93rem; margin-bottom: .7rem; }
+  .finding-fix { background: var(--panel-2); border-radius: 6px; padding: .7rem 1rem; font-size: .88rem; }
+  .finding-fix strong { color: var(--minor); display: block; margin-bottom: .3rem; font-size: .82rem; text-transform: uppercase; letter-spacing: .03em; }
+
+  .finding-select {
+    appearance: none; -webkit-appearance: none;
+    width: 18px; height: 18px; border-radius: 4px; border: 2px solid #4a5568;
+    background: #1a1d27; cursor: pointer; flex-shrink: 0; margin-top: 2px;
+    position: relative; transition: background .15s, border-color .15s;
+  }
+  .finding-select:checked { background: #4299e1; border-color: #4299e1; }
+  .finding-select:checked::after {
+    content: '✓'; position: absolute; top: -1px; left: 2px;
+    font-size: 13px; font-weight: 900; color: #fff;
+  }
+  .finding:has(.finding-select:not(:checked)) { opacity: 0.45; }
+
+  .positives {
+    background: var(--panel);
+    border: 1px solid #48bb7855;
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+  }
+  .positives ul { margin: .5rem 0 0; padding-left: 1.3rem; }
+  .positives li { margin-bottom: .6rem; color: var(--text-dim); font-size: .93rem; }
+  .positives li strong { color: var(--text); }
+
+  #sel-footer {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #1a1d27; border-top: 2px solid #4299e1;
+    padding: .7rem 2rem; display: flex; align-items: center;
+    justify-content: space-between; gap: 1rem; z-index: 100;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  #sel-count { color: #e2e8f0; font-size: .95rem; }
+  #sel-count strong { color: #4299e1; }
+  #sel-copy-btn {
+    background: #4299e1; color: #000; border: none; border-radius: 6px;
+    padding: .45rem 1.1rem; font-weight: 700; font-size: .88rem;
+    cursor: pointer; transition: background .15s;
+  }
+  #sel-copy-btn:hover { background: #63b3ed; }
+  #sel-copy-btn.copied { background: #52c41a; color: #000; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="page-header">
+    <h1>Code Review — PR #392</h1>
+    <div style="color:var(--text-dim); font-size:1rem; margin-top:.3rem;">fix(duckdb): leverage HNSW index in semantic search by decoupling filters from ANN scan and add toggle to disable</div>
+    <div class="pr-meta">
+      <span><strong>Author:</strong> ofriw</span>
+      <span><strong>Branches:</strong> <span class="branch-flow">HNSW-usage-fix → main</span></span>
+      <span><strong>Stats:</strong> 34 files · +4181 / -578</span>
+      <span><strong>Repo:</strong> chunkhound/chunkhound</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <strong>Contents</strong>
+    <ul>
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#description">What this PR does</a></li>
+      <li><a href="#findings">Findings</a></li>
+      <li><a href="#positives">What checked out fine</a></li>
+      <li><a href="#recommendation">Recommendation</a></li>
+    </ul>
+  </nav>
+
+  <section id="summary">
+    <h2>Summary</h2>
+    <table class="summary">
+      <tr><th>Severity</th><th>Count</th></tr>
+      <tr><td><span class="badge badge-critical">Critical</span></td><td>0</td></tr>
+      <tr><td><span class="badge badge-high">High</span></td><td>0</td></tr>
+      <tr><td><span class="badge badge-medium">Medium</span></td><td>2</td></tr>
+      <tr><td><span class="badge badge-minor">Minor</span></td><td>2</td></tr>
+    </table>
+  </section>
+
+  <section id="description">
+    <h2>What this PR does</h2>
+    <p style="color:var(--text-dim); font-size:.95rem;">
+      The old SQL mixed provider/model/path/threshold filters into the same query as the HNSW ANN scan, so
+      DuckDB's query planner couldn't use the HNSW index with those filters present. This PR restructures the
+      HNSW query path to do ANN candidate retrieval as a clean single-table scan using
+      <code>array_cosine_distance()</code>, applying filters afterward. It adds a <code>duckdb_hnsw_enabled</code>
+      toggle (enabled by default) to disable HNSW entirely, changes the semantic result window cap to 1,000 rows
+      when HNSW is active and unlimited when it's disabled, changes pagination so <code>pagination["total"]</code>
+      now returns <code>None</code> (callers should rely on <code>has_more</code>/<code>next_offset</code>), and
+      redefines <code>threshold</code> as an inclusive cosine-similarity floor (<code>1 - distance</code>) rather
+      than a distance ceiling — a breaking change documented with a migration guide in CHANGELOG.md. Includes 15
+      new/modified test files.
+    </p>
+  </section>
+
+  <section id="findings">
+    <h2>Findings</h2>
+
+    <div class="finding sev-medium">
+      <div class="finding-header">
+        <input type="checkbox" class="finding-select" data-id="1" checked title="Include in review comment" aria-label="Include finding 1 in comment">
+        <div class="finding-title">Undocumented new failure mode in multi-hop pagination <span class="badge badge-medium">Medium</span></div>
+      </div>
+      <span class="finding-loc">chunkhound/services/search/multi_hop_strategy.py:122</span>
+      <div class="finding-desc">
+        Multi-hop search now raises <code>ValueError</code> when <code>offset + page_size</code> exceeds
+        <code>min(semantic_result_window_cap, effective_result_limit)</code> (default 500). The CHANGELOG documents
+        the DuckDB-provider-level <code>[0, 1000)</code> cap but not this multi-hop-specific 500-row limit, so
+        callers can hit a surprising unhandled error.
+      </div>
+      <div class="finding-fix">
+        <strong>Suggested fix</strong>
+        Document the 500-row multi-hop pagination ceiling in CHANGELOG.md's migration guide, and/or catch it in
+        the MCP/CLI layer to return a clear "reduce offset or page_size" error instead of a raw ValueError
+        bubbling up.
+      </div>
+    </div>
+
+    <div class="finding sev-medium">
+      <div class="finding-header">
+        <input type="checkbox" class="finding-select" data-id="2" checked title="Include in review comment" aria-label="Include finding 2 in comment">
+        <div class="finding-title">Unbounded O(N) pagination cost when HNSW is disabled <span class="badge badge-medium">Medium</span></div>
+      </div>
+      <span class="finding-loc">chunkhound/providers/database/duckdb_provider.py:1660</span>
+      <div class="finding-desc">
+        With <code>duckdb_hnsw_enabled=false</code>, pagination is exact and uncapped but uses a plain
+        <code>ORDER BY ... LIMIT ? OFFSET ?</code> with no supporting index — each page costs O(N) over the
+        matching set. Deep pagination on large, HNSW-disabled repos degrades linearly with no ceiling, unlike the
+        HNSW path which is capped at 1000 rows.
+      </div>
+      <div class="finding-fix">
+        <strong>Suggested fix</strong>
+        Either document this as an accepted trade-off of disabling HNSW (operators opting out of ANN accept O(N)
+        exact scans), or apply the same 1000-row window cap to the exact-mode path for consistency.
+      </div>
+    </div>
+
+    <div class="finding sev-minor">
+      <div class="finding-header">
+        <input type="checkbox" class="finding-select" data-id="3" checked title="Include in review comment" aria-label="Include finding 3 in comment">
+        <div class="finding-title">Budget-exhausted error path has no test coverage <span class="badge badge-minor">Minor · test-coverage</span></div>
+      </div>
+      <span class="finding-loc">chunkhound/providers/database/duckdb_provider.py:1920</span>
+      <div class="finding-desc">
+        The <code>RuntimeError</code> path in <code>_require_complete_vector_limit</code> (budget exhausted with
+        zero results) is never exercised by any test in the new suite. A regression here — e.g. silently returning
+        <code>[]</code> instead of raising — would go undetected.
+      </div>
+      <div class="finding-fix">
+        <strong>Suggested fix</strong>
+        Add a unit test that forces the budget-exhausted zero-results branch and asserts <code>RuntimeError</code>
+        is raised.
+      </div>
+    </div>
+
+    <div class="finding sev-minor">
+      <div class="finding-header">
+        <input type="checkbox" class="finding-select" data-id="4" checked title="Include in review comment" aria-label="Include finding 4 in comment">
+        <div class="finding-title">New CI lane runs unconditionally and gates pages-artifact <span class="badge badge-minor">Minor</span></div>
+      </div>
+      <span class="finding-loc">.github/workflows/ci.yml:9</span>
+      <div class="finding-desc">
+        The new <code>hnsw-contract-tests</code> lane (including a slow 10k-row recall test) runs unconditionally
+        on every push/PR with no path filtering, adding CI cost for unrelated changes, and it gates the
+        <code>pages-artifact</code> job.
+      </div>
+      <div class="finding-fix">
+        <strong>Suggested fix</strong>
+        Add a paths filter (e.g. <code>chunkhound/providers/database/**</code>, <code>tests/**duckdb**</code>) so
+        the lane only runs when relevant code changes, or decouple it from gating pages-artifact.
+      </div>
+    </div>
+  </section>
+
+  <section id="positives">
+    <h2>What checked out fine</h2>
+    <div class="positives">
+      <ul>
+        <li><strong>SQL injection safety:</strong> parameterization is consistent throughout the rewritten query builders — table names are built from internal integer dimensions, never raw user input.</li>
+        <li><strong>Breaking change is properly documented:</strong> the threshold semantics change (distance ceiling → inclusive similarity floor, <code>1 - distance</code>) is a real breaking change but is explicitly covered in CHANGELOG.md's Breaking Changes / Migration Guide sections, and it fixes a pre-existing inconsistency with the LanceDB provider, which already used similarity-floor semantics.</li>
+        <li><strong>Pagination/overfetch logic is sound:</strong> overfetch/candidate-widening logic, pagination look-ahead, and hybrid-window-cap propagation (<code>semantic_window.py</code>, <code>hybrid_utils.py</code>) were traced end-to-end with no off-by-one or double-counting bugs found.</li>
+        <li><strong>Unusually strong test coverage:</strong> real (non-mocked) DuckDB providers, HNSW-vs-brute-force recall assertions, EXPLAIN-plan assertions proving HNSW vs sequential-scan usage, and a dedicated CI lane (<code>CHUNKHOUND_REQUIRE_HNSW=1</code>) that fails closed if VSS/HNSW isn't actually available.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="recommendation">
+    <h2>Recommendation</h2>
+    <div class="verdict-banner">
+      ⚠️ <strong>Needs Work (minor)</strong> — well-engineered and unusually well-tested; the two Medium findings should be triaged or documented before merge. Nothing blocking or critical.
+    </div>
+  </section>
+
+</div>
+
+<div id="sel-footer">
+  <span id="sel-count">Selected: <strong id="sel-num">?</strong> / <span id="sel-total">?</span> findings</span>
+  <div style="display:flex;gap:.7rem;align-items:center;">
+    <button id="sel-all-btn"  style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:5px;padding:.35rem .8rem;cursor:pointer;font-size:.82rem;">Select all</button>
+    <button id="sel-none-btn" style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:5px;padding:.35rem .8rem;cursor:pointer;font-size:.82rem;">Deselect all</button>
+    <button id="sel-copy-btn">📋 Copy Selection</button>
+  </div>
+</div>
+<script>
+(function(){
+  const boxes = () => Array.from(document.querySelectorAll('.finding-select'));
+  const numEl = document.getElementById('sel-num');
+  const totEl = document.getElementById('sel-total');
+  const copyBtn = document.getElementById('sel-copy-btn');
+
+  function update(){
+    const all = boxes();
+    const checked = all.filter(b=>b.checked);
+    numEl.textContent = checked.length;
+    totEl.textContent = all.length;
+  }
+
+  document.addEventListener('change', e => { if(e.target.classList.contains('finding-select')) update(); });
+  document.getElementById('sel-all-btn').onclick  = ()=>{ boxes().forEach(b=>b.checked=true);  update(); };
+  document.getElementById('sel-none-btn').onclick = ()=>{ boxes().forEach(b=>b.checked=false); update(); };
+
+  copyBtn.onclick = function(){
+    const checked = boxes().filter(b=>b.checked).map(b=>b.dataset.id);
+    const text = checked.length === boxes().length ? 'all'
+                : checked.length === 0             ? 'none'
+                : checked.join(',');
+    navigator.clipboard.writeText(text).then(()=>{
+      copyBtn.textContent = '✓ Copied!';
+      copyBtn.classList.add('copied');
+      setTimeout(()=>{ copyBtn.textContent='📋 Copy Selection'; copyBtn.classList.remove('copied'); }, 2000);
+    });
+  };
+
+  update();
+})();
+</script>
+</body>
+</html>

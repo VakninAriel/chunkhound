@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review — PR #339</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    line-height: 1.6;
+    padding: 2rem 1rem 80px;
+  }
+  .container { max-width: 960px; margin: 0 auto; }
+
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #161b22, #1c2128);
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 1.5rem;
+  }
+  .pr-title { font-size: 1.2rem; font-weight: 700; color: #e6edf3; margin-bottom: .6rem; }
+  .pr-meta { display: flex; flex-wrap: wrap; gap: .6rem; font-size: .82rem; color: #8b949e; }
+  .pr-meta span { background: #21262d; padding: .2rem .6rem; border-radius: 20px; border: 1px solid #30363d; }
+  .verdict-badge {
+    display: inline-flex; align-items: center; gap: .4rem;
+    background: #f0883e22; border: 1px solid #f0883e55;
+    color: #f0883e; padding: .4rem 1rem; border-radius: 8px;
+    font-weight: 700; font-size: 1rem; margin-top: .8rem;
+  }
+
+  /* Summary table */
+  .summary-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 1.2rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .summary-card h2 { font-size: 1rem; color: #8b949e; margin-bottom: .9rem; text-transform: uppercase; letter-spacing: .04em; }
+  .severity-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: .8rem;
+  }
+  .sev-box {
+    text-align: center;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: .7rem .5rem;
+  }
+  .sev-box .count { font-size: 2rem; font-weight: 700; }
+  .sev-box .label { font-size: .75rem; color: #8b949e; margin-top: .1rem; }
+  .sev-critical .count { color: #f85149; }
+  .sev-high     .count { color: #f0883e; }
+  .sev-medium   .count { color: #d29922; }
+  .sev-minor    .count { color: #3fb950; }
+
+  /* Context banner */
+  .context-banner {
+    background: #1c2f1c;
+    border: 1px solid #2ea04355;
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 1.5rem;
+    font-size: .88rem;
+    color: #b9d9b9;
+  }
+  .context-banner strong { color: #3fb950; }
+
+  /* Section heading */
+  .section-title {
+    font-size: .78rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #8b949e;
+    margin: 1.5rem 0 .8rem;
+    padding-bottom: .4rem;
+    border-bottom: 1px solid #21262d;
+  }
+
+  /* Finding card */
+  .finding {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+    transition: opacity .15s;
+  }
+  .finding:has(.finding-select:not(:checked)) { opacity: 0.45; }
+  .finding-header {
+    display: flex;
+    align-items: flex-start;
+    gap: .75rem;
+    padding: .9rem 1.2rem;
+    background: #1c2128;
+    border-bottom: 1px solid #30363d;
+    cursor: default;
+  }
+  .finding-header-text { flex: 1; min-width: 0; }
+  .finding-title { font-weight: 600; font-size: .97rem; color: #e6edf3; }
+  .finding-location { font-size: .79rem; color: #8b949e; font-family: monospace; margin-top: .2rem; }
+  .finding-body { padding: 1rem 1.2rem; }
+  .finding-body p { font-size: .9rem; color: #c9d1d9; margin-bottom: .7rem; }
+  .finding-body p:last-child { margin-bottom: 0; }
+
+  /* Severity badge */
+  .badge {
+    display: inline-flex; align-items: center; gap: .3rem;
+    padding: .18rem .55rem; border-radius: 20px;
+    font-size: .72rem; font-weight: 700; white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: .1rem;
+  }
+  .badge-critical { background: #f8514920; color: #f85149; border: 1px solid #f8514940; }
+  .badge-high     { background: #f0883e20; color: #f0883e; border: 1px solid #f0883e40; }
+  .badge-medium   { background: #d2992220; color: #d29922; border: 1px solid #d2992240; }
+  .badge-minor    { background: #3fb95020; color: #3fb950; border: 1px solid #3fb95040; }
+
+  /* Code block */
+  pre {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: .8rem 1rem;
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: .8rem;
+    overflow-x: auto;
+    color: #c9d1d9;
+    margin: .6rem 0;
+  }
+  code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: .85em; }
+  .fix-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: #3fb950; margin-bottom: .3rem; font-weight: 600; }
+
+  /* Addressed issues */
+  .addressed {
+    background: #161b22;
+    border: 1px solid #2ea04330;
+    border-radius: 10px;
+    padding: .9rem 1.2rem;
+    margin-bottom: .6rem;
+    display: flex;
+    align-items: flex-start;
+    gap: .6rem;
+  }
+  .addressed-check { color: #3fb950; font-size: 1.1rem; flex-shrink: 0; margin-top: .05rem; }
+  .addressed-text { font-size: .88rem; color: #8b949e; }
+  .addressed-text strong { color: #c9d1d9; }
+
+  /* Checkbox */
+  .finding-select {
+    appearance: none; -webkit-appearance: none;
+    width: 18px; height: 18px; border-radius: 4px; border: 2px solid #4a5568;
+    background: #1a1d27; cursor: pointer; flex-shrink: 0; margin-top: 2px;
+    position: relative; transition: background .15s, border-color .15s;
+  }
+  .finding-select:checked { background: #4299e1; border-color: #4299e1; }
+  .finding-select:checked::after {
+    content: '✓'; position: absolute; top: -1px; left: 2px;
+    font-size: 13px; font-weight: 900; color: #fff;
+  }
+
+  /* Sticky footer */
+  #sel-footer {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #1a1d27; border-top: 2px solid #4299e1;
+    padding: .7rem 2rem; display: flex; align-items: center;
+    justify-content: space-between; gap: 1rem; z-index: 100;
+  }
+  #sel-count { color: #e2e8f0; font-size: .95rem; }
+  #sel-count strong { color: #4299e1; }
+  #sel-copy-btn {
+    background: #4299e1; color: #000; border: none; border-radius: 6px;
+    padding: .45rem 1.1rem; font-weight: 700; font-size: .88rem;
+    cursor: pointer; transition: background .15s;
+  }
+  #sel-copy-btn:hover { background: #63b3ed; }
+  #sel-copy-btn.copied { background: #52c41a; color: #000; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="pr-title">PR #339 — feat(duckdb): implement database compaction with atomic swap, HNSW bookend protocol, and MCP-safe logging</div>
+    <div class="pr-meta">
+      <span>👤 ofriw (Ofri Wolfus)</span>
+      <span>🔀 ddb-compaction-6-26 → main</span>
+      <span>+6,580 / -790 lines</span>
+      <span>53 files changed</span>
+    </div>
+    <div class="verdict-badge">⚠️ Needs Work</div>
+  </div>
+
+  <!-- Summary -->
+  <div class="summary-card">
+    <h2>Severity Breakdown</h2>
+    <div class="severity-grid">
+      <div class="sev-box sev-critical"><div class="count">0</div><div class="label">🔴 Critical</div></div>
+      <div class="sev-box sev-high">    <div class="count">2</div><div class="label">🟠 High</div></div>
+      <div class="sev-box sev-medium">  <div class="count">3</div><div class="label">🟡 Medium</div></div>
+      <div class="sev-box sev-minor">   <div class="count">2</div><div class="label">🟢 Minor</div></div>
+    </div>
+  </div>
+
+  <!-- Context -->
+  <div class="context-banner">
+    <strong>Context:</strong> This PR exists on <code>ddb-compaction-6-26</code>. The local branch <code>stack/1-compaction</code> started from the same idea and diverged — it retains the <code>--read-only</code> flag, <code>sys.modules</code> shim, matryoshka embedding migration, and <code>CHUNK_INSERT_BATCH_SIZE=5000</code> cap that are absent here. Two prior reviews (<strong>grzegorznowak</strong>, <strong>SpiGAndromeda</strong>) have already flagged several of these findings — this review independently verifies which issues are real in the current code and which have already been addressed.
+  </div>
+
+  <!-- HIGH FINDINGS -->
+  <div class="section-title">🟠 High</div>
+
+  <!-- Finding 1 -->
+  <div class="finding">
+    <div class="finding-header">
+      <input type="checkbox" class="finding-select" data-id="1" checked title="Include in review comment" aria-label="Include finding 1">
+      <div class="finding-header-text">
+        <div class="finding-title">HNSW metric extraction regex never matches — always rebuilds as cosine</div>
+        <div class="finding-location">chunkhound/providers/database/duckdb_provider.py:2080–2088 · _extract_hnsw_metric</div>
+      </div>
+      <span class="badge badge-high">🟠 High</span>
+    </div>
+    <div class="finding-body">
+      <p>
+        <code>_extract_hnsw_metric</code> tries to recover the HNSW similarity metric by regex-matching <code>metric='...'</code> from the <code>CREATE INDEX</code> SQL stored in <code>duckdb_indexes()</code>. DuckDB silently strips the entire <code>WITH (...)</code> clause when persisting CREATE INDEX DDL to its catalog, so <code>create_sql</code> never contains <code>metric=</code>. The regex <em>never matches</em> and the function always returns <code>"cosine"</code>.
+      </p>
+      <p>
+        Any HNSW index created with <code>metric='l2'</code> or <code>metric='ip'</code> is silently rebuilt as cosine after compaction. This corrupts search ranking without any error, warning, or indication that the metric changed. SpiGAndromeda confirmed this in their inline comment at line 2080, citing the external compactor which uses <code>pragma_hnsw_index_info()</code> instead.
+      </p>
+      <pre>-- DuckDB catalog DDL (what the code actually receives):
+CREATE INDEX idx_hnsw_1536 ON embeddings_1536 USING HNSW (embedding)
+-- WITH (metric = 'l2') ← stripped by DuckDB catalog storage
+
+-- What _extract_hnsw_metric regex looks for: metric='...'  → no match → "cosine"</pre>
+      <div class="fix-label">Suggested fix</div>
+      <pre>def _extract_hnsw_metric(self, conn: Any, index_name: str) -> str:
+    """Recover HNSW metric from pragma_hnsw_index_info(), not catalog DDL."""
+    try:
+        row = conn.execute(
+            "SELECT metric FROM pragma_hnsw_index_info(?) LIMIT 1",
+            [index_name]
+        ).fetchone()
+        if row:
+            return row[0]
+    except Exception:
+        pass
+    return "cosine"  # safe fallback</pre>
+      <p>Callers (<code>_executor_get_vector_indexes_for_table</code> at lines 2173 and 2243) must pass <code>conn</code> and the index name alongside <code>create_sql</code>.</p>
+    </div>
+  </div>
+
+  <!-- Finding 2 -->
+  <div class="finding">
+    <div class="finding-header">
+      <input type="checkbox" class="finding-select" data-id="2" checked title="Include in review comment" aria-label="Include finding 2">
+      <div class="finding-header-text">
+        <div class="finding-title"><code>_executor_reseed_sequence</code> runs O(max_id) work on every compaction</div>
+        <div class="finding-location">chunkhound/providers/database/duckdb_provider.py:665–720 · _executor_reseed_sequence<br>also: _compact_finalize:1354, _executor_materialize_embedding_table:1712</div>
+      </div>
+      <span class="badge badge-high">🟠 High</span>
+    </div>
+    <div class="finding-body">
+      <p>
+        <code>duckdb_sequences().last_value</code> is a binary flag (NULL = never used, 1 = used at least once), not the actual sequence counter. So after any sequence usage, <code>current_value = 1</code> regardless of how many times <code>nextval</code> was called. This causes <code>advance_by = max_id - 1</code> on every invocation, executing <code>SELECT nextval(seq) FROM range(max_id - 1)</code> — O(max_id) work.
+      </p>
+      <p>
+        <strong>Compaction path:</strong> <code>_compact_finalize</code> calls <code>_executor_reseed_sequence</code> for <code>files</code> and <code>chunks</code> (lines 1354). On a database with 2M files/chunks, compaction stalls for several seconds doing nothing useful. The comment at line 1360 acknowledges embeddings "can't use DROP" and uses the direct <code>range(max_id)</code> path — but <code>_executor_recreate_sequence</code> (which does use DROP + CREATE, O(1)) already exists and is used in <code>_executor_rebuild_embedding_tables</code>.
+      </p>
+      <p>
+        <strong>Normal operation path:</strong> <code>_executor_materialize_embedding_table</code> calls <code>_executor_reseed_sequence</code> for existing embedding tables (line 1712). Since this is called from <code>_executor_ensure_embedding_table_exists</code> on each embedding upsert batch, O(max_id) work runs per batch on any large database.
+      </p>
+      <pre># _executor_reseed_sequence — the bug
+current_value_result = conn.execute(
+    "SELECT last_value FROM duckdb_sequences() WHERE sequence_name = ?", [seq]
+).fetchone()
+current_value = current_value_result[0] if current_value_result else None
+# last_value is BINARY FLAG (1 or NULL), not the actual counter!
+# → advance_by = max_id - 1 every time
+advance_by = max_id - int(current_value)
+conn.execute(f"SELECT nextval('{seq}') FROM range({advance_by})")  # O(max_id)</pre>
+      <div class="fix-label">Suggested fix</div>
+      <pre># Use _executor_recreate_sequence (O(1)) for all reseed paths:
+def _executor_reseed_sequence(self, conn, table_name, sequence_name):
+    max_result = conn.execute(
+        f"SELECT COALESCE(MAX(id), 0) + 1 FROM {self._quote_duckdb_identifier(table_name)}"
+    ).fetchone()
+    next_value = int(max_result[0]) if max_result else 1
+    self._executor_recreate_sequence(conn, sequence_name, next_value)</pre>
+      <p>For embeddings in <code>_compact_finalize</code>, use <code>_executor_recreate_sequence(conn, "embeddings_id_seq", max_embedding_id + 1)</code> instead of the <code>range(max_id)</code> loop.</p>
+    </div>
+  </div>
+
+  <!-- MEDIUM FINDINGS -->
+  <div class="section-title">🟡 Medium</div>
+
+  <!-- Finding 3 -->
+  <div class="finding">
+    <div class="finding-header">
+      <input type="checkbox" class="finding-select" data-id="3" checked title="Include in review comment" aria-label="Include finding 3">
+      <div class="finding-header-text">
+        <div class="finding-title"><code>INSTALL vss</code> in <code>_compact_copy_data</code> requires network — breaks offline compaction</div>
+        <div class="finding-location">chunkhound/providers/database/duckdb_provider.py:1208 · _compact_copy_data</div>
+      </div>
+      <span class="badge badge-medium">🟡 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p>
+        The rebuild connection opens a fresh DuckDB database and immediately calls <code>INSTALL vss</code>. On an offline machine (air-gapped CI, disconnected dev environment, network failure during a long indexing run), this fails with a network error, causing auto-compaction to abort and the backup-then-swap state to trigger <code>_compact_restore</code>. The rollback path is correct, but the trigger is unnecessary — ChunkHound cannot run without <code>vss</code> already installed, so <code>INSTALL vss</code> → <code>LOAD vss</code> should be <code>LOAD vss</code> only.
+      </p>
+      <pre># Before (fails offline):
+tgt_conn.execute("INSTALL vss")
+tgt_conn.execute("LOAD vss")
+
+# After:
+tgt_conn.execute("LOAD vss")  # vss is always installed by the time we index</pre>
+      <p>If forward compatibility with fresh installs is needed, guard with <code>try: LOAD vss except: INSTALL vss; LOAD vss</code> so the common path stays network-free.</p>
+    </div>
+  </div>
+
+  <!-- Finding 4 -->
+  <div class="finding">
+    <div class="finding-header">
+      <input type="checkbox" class="finding-select" data-id="4" checked title="Include in review comment" aria-label="Include finding 4">
+      <div class="finding-header-text">
+        <div class="finding-title"><code>preserve_insertion_order = false</code> missing from rebuild connection — peak memory risk</div>
+        <div class="finding-location">chunkhound/providers/database/duckdb_provider.py:1206–1210 · _compact_copy_data</div>
+      </div>
+      <span class="badge badge-medium">🟡 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p>
+        Three other bulk-write paths in this codebase set <code>SET preserve_insertion_order = false</code> before large <code>INSERT ... SELECT</code> operations (duckdb_provider.py:831, :2624, embedding_repository.py:494). This setting lets DuckDB use a memory-efficient streaming copy instead of buffering the full result in insertion order.
+      </p>
+      <p>
+        The <code>_compact_copy_data</code> rebuild connection (which copies all files, chunks, and every embedding table) doesn't set this flag. SpiGAndromeda's inline comment at line 1206 cites the external compactor's benchmarks: full rebuild peak RAM is 3–4× source table size on large indexes. For a 1.25 TB index, that was 11.8 GiB peak RSS just for HNSW rebuild.
+      </p>
+      <pre>tgt_conn = duckdb.connect(str(compacted_path))
+tgt_conn.execute("LOAD vss")
+tgt_conn.execute("SET hnsw_enable_experimental_persistence = true")
+tgt_conn.execute("SET preserve_insertion_order = false")  # ← add this</pre>
+    </div>
+  </div>
+
+  <!-- Finding 5 -->
+  <div class="finding">
+    <div class="finding-header">
+      <input type="checkbox" class="finding-select" data-id="5" checked title="Include in review comment" aria-label="Include finding 5">
+      <div class="finding-header-text">
+        <div class="finding-title">Crash-recovery warning silenced in MCP mode — significant event goes unlogged</div>
+        <div class="finding-location">chunkhound/providers/database/duckdb/connection_manager.py:596–600 · _recover_interrupted_compaction</div>
+      </div>
+      <span class="badge badge-medium">🟡 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p>
+        When <code>_recover_interrupted_compaction</code> detects a <code>.compact_backup</code> file and a missing/empty live DB, it restores the database from the backup. This means a previous process died mid-compaction and the DB was atomically restored. It uses <code>log_if_not_mcp("warning", "Recovering DuckDB database...")</code> — which is completely suppressed under <code>CHUNKHOUND_MCP_MODE=1</code> because loguru sinks are disabled in stdio mode.
+      </p>
+      <p>
+        Compare <code>_compact_copy_data</code> at lines 1290–1293, which explicitly prints the "dropped non-ChunkHound tables" warning to <code>sys.stderr</code> even in MCP mode, with the comment "Destructive operation — surface to stderr even in MCP mode." Crash recovery is at least as significant and should receive the same treatment.
+      </p>
+      <pre># Before (silent in MCP mode):
+log_if_not_mcp("warning", "Recovering DuckDB database from interrupted compaction backup: ...")
+
+# After (always surface):
+msg = f"WARNING: Recovering DuckDB database from interrupted compaction backup: {backup_path}"
+if os.environ.get("CHUNKHOUND_MCP_MODE") == "1":
+    print(msg, file=sys.stderr)
+else:
+    logger.warning(msg)</pre>
+    </div>
+  </div>
+
+  <!-- MINOR FINDINGS -->
+  <div class="section-title">🟢 Minor</div>
+
+  <!-- Finding 6 -->
+  <div class="finding">
+    <div class="finding-header">
+      <input type="checkbox" class="finding-select" data-id="6" checked title="Include in review comment" aria-label="Include finding 6">
+      <div class="finding-header-text">
+        <div class="finding-title">One remaining redundant <code>os.environ.get("CHUNKHOUND_MCP_MODE")</code> guard pattern</div>
+        <div class="finding-location">chunkhound/providers/database/duckdb_provider.py:1290–1295 · _compact_copy_data</div>
+      </div>
+      <span class="badge badge-minor">🟢 Minor</span>
+    </div>
+    <div class="finding-body">
+      <p>
+        The <code>else</code> branch at line 1295 calls <code>log_if_not_mcp("warning", msg)</code> — but since the <code>if</code> branch already handles the MCP case (<code>== "1"</code>), the else branch only runs when MCP mode is not <code>"1"</code>. So <code>log_if_not_mcp</code> there is redundant; a plain <code>logger.warning(msg)</code> would be clearer. The intentional pattern here (surface to stderr in MCP mode) is correct and matches finding #5's recommendation — this is just a clarity nit.
+      </p>
+    </div>
+  </div>
+
+  <!-- Finding 7 -->
+  <div class="finding">
+    <div class="finding-header">
+      <input type="checkbox" class="finding-select" data-id="7" checked title="Include in review comment" aria-label="Include finding 7">
+      <div class="finding-header-text">
+        <div class="finding-title"><code>_executor_embedding_table_needs_rebuild</code> column default check is fragile</div>
+        <div class="finding-location">chunkhound/providers/database/duckdb_provider.py · _executor_embedding_table_needs_rebuild</div>
+      </div>
+      <span class="badge badge-minor">🟢 Minor</span>
+    </div>
+    <div class="finding-body">
+      <p>
+        <code>_executor_embedding_table_needs_rebuild</code> checks <code>id_default != "nextval('embeddings_id_seq')"</code> and <code>dims_default != str(dims)</code> as string comparisons against values returned by <code>information_schema.columns.column_default</code>. DuckDB may format these differently (e.g. <code>nextval('embeddings_id_seq'::regclass)</code> or with whitespace variation) across versions, causing false positives that trigger unnecessary full table rebuilds during compaction.
+      </p>
+      <p>
+        Consider using <code>_executor_table_has_primary_key</code> and a behavioral check (actually attempt to insert via the sequence and rollback) rather than string-matching DDL representations.
+      </p>
+    </div>
+  </div>
+
+  <hr style="border-color: #21262d; margin: 2rem 0;">
+
+  <!-- Addressed issues from prior reviews -->
+  <div class="section-title">✅ Verified — Prior review findings already addressed</div>
+
+  <div class="addressed">
+    <span class="addressed-check">✓</span>
+    <div class="addressed-text"><strong>COMPACT_SAMPLE_INTERVAL = 10 (VakninAriel)</strong> — Current code is 100, with a detailed comment explaining the ≈10–50 checks-per-indexing-run rationale. Already correct.</div>
+  </div>
+  <div class="addressed">
+    <span class="addressed-check">✓</span>
+    <div class="addressed-text"><strong>tool_requires_db() KeyError on unknown tools (VakninAriel)</strong> — Current code uses <code>TOOL_REGISTRY.get(tool_name)</code> with a conservative <code>True</code> fallback for unknown tools. Not a KeyError.</div>
+  </div>
+  <div class="addressed">
+    <span class="addressed-check">✓</span>
+    <div class="addressed-text"><strong>_connect_provider() swallows DatabaseCompactionInProgressError (VakninAriel)</strong> — Current code re-raises after logging: <code>raise</code> is present at base.py:1222. The error propagates correctly.</div>
+  </div>
+  <div class="addressed">
+    <span class="addressed-check">✓</span>
+    <div class="addressed-text"><strong>Read-only startup mutates compaction artifacts (grzegorznowak)</strong> — <code>_recover_interrupted_compaction()</code> and <code>_preemptive_wal_cleanup()</code> are gated on <code>if not self._read_only</code> at connection_manager.py:98. Not called in read-only mode.</div>
+  </div>
+  <div class="addressed">
+    <span class="addressed-check">✓</span>
+    <div class="addressed-text"><strong>MCP reconnect during compaction undoing the swap (grzegorznowak)</strong> — <code>DuckDBProvider.connect()</code> checks <code>_executor.is_compaction_in_progress()</code> at line 1291 <em>before</em> calling connection_manager.connect(). <code>set_compaction_in_progress(True)</code> is set at line 1460, before any filesystem ops. The race is covered.</div>
+  </div>
+  <div class="addressed">
+    <span class="addressed-check">✓</span>
+    <div class="addressed-text"><strong>Realtime embed mutations not retried during compaction (grzegorznowak)</strong> — The embed branch at pipeline.py:1462 explicitly catches <code>DatabaseCompactionInProgressError</code> and delegates to <code>_handle_compaction_busy(mutation, "embed")</code> which schedules retry with backoff.</div>
+  </div>
+
+  <hr style="border-color: #21262d; margin: 2rem 0;">
+
+  <!-- Overall recommendation -->
+  <div class="summary-card">
+    <h2>Overall Recommendation</h2>
+    <div style="font-size:.95rem; color:#c9d1d9; margin-top:.6rem; line-height:1.7;">
+      The compaction architecture is well-designed — crash recovery, atomic swap, HNSW bookend protocol, and the MCP logging guard are all solid. The three-phase guard (set flag → close connections → rename file) correctly prevents reconnects from corrupting in-progress compaction state, and the pre-submit compaction check in the executor is the right location.<br><br>
+      Two high-severity bugs need fixing before merge: (1) HNSW metric is always silently rebuilt as cosine post-compaction, corrupting non-cosine indexes; (2) the O(max_id) sequence reseed will cause multi-second stalls on large databases both during compaction and on normal embedding table access. The three medium issues (offline <code>INSTALL vss</code>, missing <code>preserve_insertion_order</code>, silent crash-recovery log) are straightforward one-liners each.
+    </div>
+  </div>
+
+  <div style="text-align:right; color:#8b949e; font-size:.78rem; margin-top:1rem;">
+    Reviewed by Ariel Vaknin via Claude Code
+  </div>
+
+</div>
+
+<!-- Sticky footer -->
+<div id="sel-footer">
+  <span id="sel-count">Selected: <strong id="sel-num">?</strong> / <span id="sel-total">?</span> findings</span>
+  <div style="display:flex;gap:.7rem;align-items:center;">
+    <button id="sel-all-btn"  style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:5px;padding:.35rem .8rem;cursor:pointer;font-size:.82rem;">Select all</button>
+    <button id="sel-none-btn" style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:5px;padding:.35rem .8rem;cursor:pointer;font-size:.82rem;">Deselect all</button>
+    <button id="sel-copy-btn">📋 Copy Selection</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const boxes = () => Array.from(document.querySelectorAll('.finding-select'));
+  const numEl = document.getElementById('sel-num');
+  const totEl = document.getElementById('sel-total');
+  const copyBtn = document.getElementById('sel-copy-btn');
+
+  function update(){
+    const all = boxes();
+    const checked = all.filter(b=>b.checked);
+    numEl.textContent = checked.length;
+    totEl.textContent = all.length;
+  }
+
+  document.addEventListener('change', e => {
+    if(e.target.classList.contains('finding-select')) update();
+  });
+  document.getElementById('sel-all-btn').onclick  = ()=>{ boxes().forEach(b=>b.checked=true);  update(); };
+  document.getElementById('sel-none-btn').onclick = ()=>{ boxes().forEach(b=>b.checked=false); update(); };
+
+  copyBtn.onclick = function(){
+    const allBoxes = boxes();
+    const checked = allBoxes.filter(b=>b.checked).map(b=>b.dataset.id);
+    const text = checked.length === allBoxes.length ? 'all'
+               : checked.length === 0              ? 'none'
+               : checked.join(',');
+    navigator.clipboard.writeText(text).then(()=>{
+      copyBtn.textContent = '✓ Copied!';
+      copyBtn.classList.add('copied');
+      setTimeout(()=>{ copyBtn.textContent='📋 Copy Selection'; copyBtn.classList.remove('copied'); }, 2000);
+    });
+  };
+
+  update();
+})();
+</script>
+</body>
+</html>

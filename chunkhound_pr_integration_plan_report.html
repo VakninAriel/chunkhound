@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound PR Integration Plan — PR #333 + PR #339</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 250px; min-width: 250px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 10px; }
+    #sidebar .group { margin-bottom: 18px; }
+    #sidebar a { display: block; padding: 7px 20px; color: #cdd6f4; text-decoration: none; font-size: 12px; border-left: 3px solid transparent; line-height: 1.4; }
+    #sidebar a:hover, #sidebar a.active { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #sidebar .sub { padding-left: 32px; font-size: 11px; color: #a6adc8; }
+    #content-wrap { flex: 1; display: flex; flex-direction: column; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 22px 40px; border-bottom: 3px solid #89b4fa; }
+    header h1 { font-size: 20px; font-weight: 700; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    header .pr-badges { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+    .badge-blue { background: #89b4fa; color: #1e1e2e; }
+    .badge-green { background: #a6e3a1; color: #1e1e2e; }
+    .badge-yellow { background: #f9e2af; color: #1e1e2e; }
+    .badge-red { background: #f38ba8; color: #1e1e2e; }
+    .badge-gray { background: #585b70; color: #cdd6f4; }
+    #main { flex: 1; padding: 36px 40px; max-width: 960px; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; display: flex; align-items: center; gap: 10px; }
+    .section h3 { font-size: 14px; font-weight: 700; color: #313244; margin: 18px 0 8px; }
+    .section h4 { font-size: 13px; font-weight: 600; color: #45475a; margin: 12px 0 6px; }
+    .section p, .section li { font-size: 13.5px; line-height: 1.7; color: #555; }
+    .section ul, .section ol { padding-left: 20px; margin-top: 6px; }
+    .section li { margin-bottom: 4px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.55; }
+    code { background: #f0f0f0; color: #c0392b; padding: 1px 5px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 12.5px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    .hlg { color: #a6e3a1; } /* green */
+    .hly { color: #f9e2af; } /* yellow */
+    .hlb { color: #89b4fa; } /* blue */
+    .hlr { color: #f38ba8; } /* red */
+    .hlp { color: #cba6f7; } /* purple */
+    .hlc { color: #6c7086; } /* comment */
+    details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 10px 0; }
+    summary { padding: 10px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 13px; color: #333; border-radius: 6px; user-select: none; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }
+    details > div { padding: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 9px 12px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    td { padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .status-done { color: #40a02b; font-weight: 700; }
+    .status-partial { color: #df8e1d; font-weight: 700; }
+    .status-missing { color: #d20f39; font-weight: 700; }
+    .status-unknown { color: #7287fd; font-weight: 700; }
+    .callout { padding: 12px 16px; border-radius: 6px; margin: 12px 0; font-size: 13px; border-left: 4px solid; }
+    .callout-info { background: #eff1f5; border-color: #89b4fa; color: #4c4f69; }
+    .callout-warn { background: #fdf6e3; border-color: #df8e1d; color: #7a5900; }
+    .callout-danger { background: #fff0f0; border-color: #d20f39; color: #7a1010; }
+    .callout-success { background: #f0fdf4; border-color: #40a02b; color: #1e4620; }
+    .task-block { background: #f8f9fc; border: 1px solid #d0d4e0; border-radius: 6px; margin: 14px 0; }
+    .task-block .task-header { background: #313244; color: #cdd6f4; padding: 10px 16px; border-radius: 5px 5px 0 0; font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+    .task-body { padding: 14px 16px; }
+    .step { display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start; }
+    .step-num { background: #89b4fa; color: #1e1e2e; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+    .step-content { flex: 1; }
+    .step-content p { font-size: 13px; color: #444; }
+    .file-tag { font-family: 'Courier New', monospace; font-size: 11.5px; background: #e8eaf0; color: #313244; padding: 1px 6px; border-radius: 3px; border: 1px solid #c5c8da; }
+    .conflict-row { background: #fff8f0 !important; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; }
+    .card h4 { color: #1e1e2e; margin-bottom: 8px; font-size: 13px; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0 32px; border-top: 1px solid #e0e0e0; margin-top: 24px; }
+    .phase-header { display: flex; align-items: center; gap: 12px; margin: 24px 0 12px; }
+    .phase-num { background: #89b4fa; color: #1e1e2e; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; flex-shrink: 0; }
+    .phase-title { font-size: 15px; font-weight: 700; color: #1e1e2e; }
+  </style>
+</head>
+<body>
+<nav id="sidebar">
+  <div class="group">
+    <h2>Overview</h2>
+    <a href="#overview">Executive Summary</a>
+    <a href="#branch-state">Current Branch State</a>
+  </div>
+  <div class="group">
+    <h2>PR Analysis</h2>
+    <a href="#pr333">PR #333 — Matryoshka</a>
+    <a class="sub" href="#pr333-status">Integration Status</a>
+    <a class="sub" href="#pr333-gaps">Gaps to Fill</a>
+    <a href="#pr339">PR #339 — Compaction</a>
+    <a class="sub" href="#pr339-status">Integration Status</a>
+    <a class="sub" href="#pr339-gaps">Gaps to Fill</a>
+  </div>
+  <div class="group">
+    <h2>Conflicts</h2>
+    <a href="#conflicts">Conflict Analysis</a>
+    <a href="#resolution">Resolution Strategy</a>
+  </div>
+  <div class="group">
+    <h2>Integration Plan</h2>
+    <a href="#task0">Task 0 — Commit Unstaged</a>
+    <a href="#task1">Task 1 — PR #333 Gaps</a>
+    <a href="#task2">Task 2 — schema_constants</a>
+    <a href="#task3">Task 3 — Core Compaction</a>
+    <a href="#task4">Task 4 — Crash Recovery</a>
+    <a href="#task5">Task 5 — Auto-Compaction</a>
+    <a href="#task6">Task 6 — Service Layer</a>
+    <a href="#task7">Task 7 — MCP Server</a>
+    <a href="#task8">Task 8 — Tests</a>
+    <a href="#verify">Verification</a>
+  </div>
+</nav>
+
+<div id="content-wrap">
+  <header>
+    <h1>ChunkHound — PR Integration Plan</h1>
+    <div class="meta">Branch: stack/1-compaction &nbsp;|&nbsp; Generated: 2026-06-16 &nbsp;|&nbsp; Author: Ariel Vaknin</div>
+    <div class="pr-badges">
+      <span class="badge badge-blue">PR #333 — Matryoshka Embeddings</span>
+      <span class="badge badge-blue">PR #339 — Database Compaction</span>
+      <span class="badge badge-yellow">Partial Integration In-Progress</span>
+    </div>
+  </header>
+
+  <div id="main">
+
+    <!-- OVERVIEW -->
+    <div class="section" id="overview">
+      <h2>Executive Summary</h2>
+      <p>Two open PRs in <code>chunkhound/chunkhound</code> need to be integrated into the local <code>stack/1-compaction</code> branch. Both PRs are largely independent — PR #333 targets the embedding layer and PR #339 targets the database layer — but they share three files that require careful additive merges.</p>
+
+      <div class="two-col" style="margin-top:16px;">
+        <div class="card">
+          <h4>PR #333 — Matryoshka Embeddings</h4>
+          <p style="font-size:12.5px; color:#555; line-height:1.6;">Variable-dimension embedding support for OpenAI and VoyageAI. Users can request smaller vectors (e.g. 256 dims) instead of full native vectors, enabling cost and performance trade-offs via Matryoshka representation learning.</p>
+          <p style="margin-top:8px;"><span class="badge badge-yellow">~60% integrated</span></p>
+        </div>
+        <div class="card">
+          <h4>PR #339 — Database Compaction</h4>
+          <p style="font-size:12.5px; color:#555; line-height:1.6;">Three-phase atomic database compaction to reclaim HNSW-induced file fragmentation. Removes manual checkpoint tracking, adds probabilistic auto-compaction, crash recovery, and MCP-aware service reconnect.</p>
+          <p style="margin-top:8px;"><span class="badge badge-red">~10% integrated</span></p>
+        </div>
+      </div>
+
+      <div class="callout callout-info" style="margin-top:16px;">
+        <strong>Integration order:</strong> Commit local unstaged work first (Task 0), then fill PR #333 protocol gaps (Task 1), then port the large PR #339 compaction feature (Tasks 2–8). The two PRs can proceed independently after Task 0.
+      </div>
+    </div>
+
+    <!-- BRANCH STATE -->
+    <div class="section" id="branch-state">
+      <h2>Current Branch State</h2>
+
+      <h3>Recent Commits</h3>
+      <pre><span class="hlb">d59fa669</span> fix(db): reset DuckDB connection on disk-full and invalidated-database errors
+<span class="hlb">0575ff2f</span> fix(embeddings): avoid SQL IN-clause timeout on large repos
+<span class="hlb">8282831a</span> <span class="hlg">feat(embeddings): add configurable output dimensions for OpenAI and VoyageAI providers</span>
+<span class="hlb">6c1d55e5</span> fix(ci): fix macOS 3.14 timeout and remove_file deferred-state race
+<span class="hlb">090cd754</span> feat(cli): surface database checkpoint in indexing output</pre>
+
+      <h3>Unstaged Changes (not yet committed)</h3>
+      <p>These are local memory-efficiency improvements that must be committed before integration work begins:</p>
+      <table style="margin-top:10px;">
+        <thead><tr><th>File</th><th>Change</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="file-tag">database_config.py</span></td><td>Add <code>duckdb_memory_limit: str | None</code></td><td>Cap DuckDB RAM on large repos</td></tr>
+          <tr><td><span class="file-tag">database_provider.py</span></td><td>Add <code>get_chunk_ids_and_file_paths()</code> method</td><td>Lightweight chunk enumeration (no code content)</td></tr>
+          <tr><td><span class="file-tag">connection_manager.py</span></td><td>Disable insertion-order + memory limit</td><td>Reduce peak memory for large scans</td></tr>
+          <tr><td><span class="file-tag">lancedb_provider.py</span></td><td>Implement <code>get_chunk_ids_and_file_paths()</code></td><td>LanceDB side of new interface method</td></tr>
+          <tr><td><span class="file-tag">openai_provider.py</span></td><td>Remove condition preventing dims from being sent</td><td>Bug fix: output dimensions weren't reaching API</td></tr>
+          <tr><td><span class="file-tag">embedding_service.py</span></td><td>Batch fetching (5K rows), SQL IN batching (1K)</td><td>Prevent OOM and timeout on million-chunk repos</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- PR #333 -->
+    <div class="section" id="pr333">
+      <h2><span class="badge badge-blue" style="font-size:12px;">PR #333</span> Matryoshka Variable-Dimension Embeddings</h2>
+
+      <p>Adds Matryoshka embedding support to OpenAI (<code>text-embedding-3-*</code>) and VoyageAI providers. Users can request reduced-dimension vectors (e.g. <code>--dimensions 256</code>) with two modes: <strong>server-side</strong> (API returns truncated vector) and <strong>client-side</strong> (API returns full vector, client truncates + L2-normalizes).</p>
+
+      <h3 id="pr333-status">Integration Status</h3>
+      <table>
+        <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>VoyageAI dimensions</td><td class="status-done">✅ Done</td><td>Full <code>VOYAGE_MODEL_CONFIG</code> with variable-dim arrays (256/512/1024/2048)</td></tr>
+          <tr><td>Config <code>dimensions</code> field</td><td class="status-done">✅ Done</td><td><code>EmbeddingConfig.dimensions: int | None = 256</code></td></tr>
+          <tr><td>OpenAI dimensions (committed)</td><td class="status-partial">⚠️ Buggy</td><td>Committed in 8282831a but condition blocks dims reaching API</td></tr>
+          <tr><td>OpenAI dimension fix</td><td class="status-partial">⚠️ Unstaged</td><td>Fix in working tree, needs commit</td></tr>
+          <tr><td><code>client_side_truncation</code> config flag</td><td class="status-missing">❌ Missing</td><td>Not in <code>EmbeddingConfig</code></td></tr>
+          <tr><td>Protocol matryoshka properties</td><td class="status-missing">❌ Missing</td><td><code>native_dims</code>, <code>supported_dimensions</code>, <code>output_dims</code>, <code>client_side_truncation</code> absent</td></tr>
+          <tr><td>L2-normalize / truncation utils</td><td class="status-missing">❌ Missing</td><td><code>shared_utils.py</code> exists but has text utils only, not truncation</td></tr>
+          <tr><td>Factory wiring for client-side truncation</td><td class="status-missing">❌ Missing</td><td><code>embedding_factory.py</code> doesn't forward <code>client_side_truncation</code></td></tr>
+          <tr><td>Test coverage</td><td class="status-missing">❌ Missing</td><td><code>test_matryoshka_embeddings.py</code>, <code>provider_test_helpers.py</code> absent</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="pr333-gaps">Key Code to Add</h3>
+
+      <details>
+        <summary>EmbeddingProvider protocol — matryoshka properties</summary>
+        <div>
+          <p>Add to <span class="file-tag">chunkhound/interfaces/embedding_provider.py</span> after the <code>dims</code> property:</p>
+          <pre><span class="hlp">@property</span>
+<span class="hlb">def</span> <span class="hlg">native_dims</span>(self) -> int:
+    <span class="hlc">"""Full/native embedding dimension before any truncation."""</span>
+    ...
+
+<span class="hlp">@property</span>
+<span class="hlb">def</span> <span class="hlg">supported_dimensions</span>(self) -> Sequence[int]:
+    <span class="hlc">"""Known valid output dimensions. Empty = native-only."""</span>
+    ...
+
+<span class="hlp">@property</span>
+<span class="hlb">def</span> <span class="hlg">output_dims</span>(self) -> int | None:
+    <span class="hlc">"""Active dimension override, or None for native dims."""</span>
+    ...
+
+<span class="hlp">@property</span>
+<span class="hlb">def</span> <span class="hlg">client_side_truncation</span>(self) -> bool:
+    <span class="hlc">"""True: client truncates+L2-normalizes instead of API."""</span>
+    ...</pre>
+        </div>
+      </details>
+
+      <details>
+        <summary>EmbeddingConfig — client_side_truncation field + validator</summary>
+        <div>
+          <p>Add to <span class="file-tag">chunkhound/core/config/embedding_config.py</span>:</p>
+          <pre>client_side_truncation: bool = Field(
+    default=<span class="hlg">False</span>,
+    description=<span class="hly">"When True, request full vectors and truncate+L2-normalize locally."
+    " Requires `dimensions` to be set."</span>,
+)
+
+<span class="hlp">@model_validator</span>(mode=<span class="hly">"after"</span>)
+<span class="hlb">def</span> <span class="hlg">validate_client_side_truncation</span>(self) -> Self:
+    <span class="hlb">if</span> self.client_side_truncation <span class="hlb">and</span> self.dimensions <span class="hlb">is</span> None:
+        <span class="hlb">raise</span> ValueError(<span class="hly">"client_side_truncation requires dimensions to be set"</span>)
+    <span class="hlb">return</span> self</pre>
+        </div>
+      </details>
+
+      <details>
+        <summary>shared_utils.py — L2-normalize and client-side truncation</summary>
+        <div>
+          <p>Add to <span class="file-tag">chunkhound/providers/embeddings/shared_utils.py</span>:</p>
+          <pre><span class="hlb">import</span> math
+
+<span class="hlb">def</span> <span class="hlg">l2_normalize</span>(vector: list[float]) -> list[float]:
+    norm = math.sqrt(sum(x * x <span class="hlb">for</span> x <span class="hlb">in</span> vector))
+    <span class="hlb">if</span> norm == <span class="hlg">0.0</span>:
+        <span class="hlb">return</span> vector
+    <span class="hlb">return</span> [x / norm <span class="hlb">for</span> x <span class="hlb">in</span> vector]
+
+<span class="hlb">def</span> <span class="hlg">apply_client_side_truncation</span>(
+    embeddings: list[list[float]], output_dims: int
+) -> list[list[float]]:
+    <span class="hlc">"""Truncate to output_dims and L2-normalize (required for cosine similarity)."""</span>
+    <span class="hlb">return</span> [l2_normalize(v[:output_dims]) <span class="hlb">for</span> v <span class="hlb">in</span> embeddings]</pre>
+        </div>
+      </details>
+    </div>
+
+    <!-- PR #339 -->
+    <div class="section" id="pr339">
+      <h2><span class="badge badge-blue" style="font-size:12px;">PR #339</span> Database Compaction — HNSW Fragmentation Recovery</h2>
+
+      <p>Removes manual checkpoint tracking (which defeats DuckDB's direct-write WAL optimization) and replaces it with: (1) mandatory batch compaction boundaries post-chunking and post-embedding, and (2) probabilistic auto-compaction after write operations. Uses a three-phase atomic swap to safely rebuild the database file.</p>
+
+      <div class="callout callout-info">
+        <strong>Key insight:</strong> Manual <code>CHECKPOINT</code> calls every 100 ops prevent DuckDB from using its fast-path WAL optimization. PR #339 removes this entirely, replacing it with infrequent, stateless, atomic compaction.
+      </div>
+
+      <h3>Three-Phase Atomic Swap</h3>
+      <ol style="padding-left:20px; margin:10px 0;">
+        <li><strong>Checkpoint + Backup:</strong> Flush WAL to disk, create a copy of the live DB as <code>.compaction_backup</code></li>
+        <li><strong>Copy + Rebuild:</strong> Build a new canonical DB file containing only ChunkHound tables (drops unknowns)</li>
+        <li><strong>Atomic Swap:</strong> Replace live file with compacted version; restore backup if interrupted (crash safety)</li>
+      </ol>
+
+      <h3 id="pr339-status">Integration Status</h3>
+      <table>
+        <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Compaction config fields</td><td class="status-partial">⚠️ Different</td><td>Branch has <code>compaction_enabled/threshold/min_size_mb</code>; PR uses <code>fragmentation_threshold_pct</code></td></tr>
+          <tr><td><code>schema_constants.py</code></td><td class="status-missing">❌ Missing</td><td>DDL constants file not present</td></tr>
+          <tr><td>Three-phase atomic compaction</td><td class="status-missing">❌ Missing</td><td><code>duckdb_provider.py</code> has <code>_run_blocking_compaction()</code> but not full atomic swap</td></tr>
+          <tr><td>Fragmentation measurement</td><td class="status-missing">❌ Missing</td><td>No <code>measure_fragmentation()</code></td></tr>
+          <tr><td>HNSW index drop/rebuild</td><td class="status-missing">❌ Missing</td><td>No <code>drop_hnsw_indexes()</code> / <code>ensure_hnsw_indexes()</code></td></tr>
+          <tr><td><code>_recover_interrupted_compaction()</code></td><td class="status-missing">❌ Missing</td><td>Not in <code>connection_manager.py</code></td></tr>
+          <tr><td>Probabilistic auto-compaction</td><td class="status-missing">❌ Missing</td><td><code>serial_executor.py</code> missing 1/N sampling</td></tr>
+          <tr><td>Mandatory batch boundaries</td><td class="status-missing">❌ Missing</td><td><code>indexing_coordinator.py</code> missing post-chunk/post-embed calls</td></tr>
+          <tr><td>Realtime retry with backoff</td><td class="status-missing">❌ Missing</td><td><code>realtime/pipeline.py</code> missing <code>_try_mutation_with_compaction_retry()</code></td></tr>
+          <tr><td>MCP <code>ensure_tool_services()</code></td><td class="status-missing">❌ Missing</td><td><code>mcp_server/base.py</code> still uses <code>ensure_services()</code></td></tr>
+          <tr><td><code>windows_constants._unlink_compacted()</code></td><td class="status-unknown">? Unknown</td><td>File exists; content needs verification</td></tr>
+          <tr><td>Tests</td><td class="status-missing">❌ Missing</td><td><code>test_duckdb_compaction.py</code> (2158 lines), <code>test_realtime_compaction_retry.py</code> absent</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="pr339-gaps">Files to Create or Heavily Modify</h3>
+      <table>
+        <thead><tr><th>File</th><th>Action</th><th>Change Size</th></tr></thead>
+        <tbody>
+          <tr><td><span class="file-tag">duckdb/schema_constants.py</span></td><td>CREATE</td><td>+146 lines</td></tr>
+          <tr><td><span class="file-tag">duckdb_provider.py</span></td><td>MODIFY (major)</td><td>+1098, -283 lines</td></tr>
+          <tr><td><span class="file-tag">serial_executor.py</span></td><td>MODIFY</td><td>+129, -28 lines</td></tr>
+          <tr><td><span class="file-tag">indexing_coordinator.py</span></td><td>MODIFY</td><td>+112, -31 lines</td></tr>
+          <tr><td><span class="file-tag">realtime/pipeline.py</span></td><td>MODIFY</td><td>+148, -12 lines</td></tr>
+          <tr><td><span class="file-tag">mcp_server/base.py</span></td><td>MODIFY</td><td>+31, -2 lines</td></tr>
+          <tr><td><span class="file-tag">tests/test_duckdb_compaction.py</span></td><td>CREATE</td><td>+2158 lines</td></tr>
+          <tr><td><span class="file-tag">tests/unit/test_realtime_compaction_retry.py</span></td><td>CREATE</td><td>+148 lines</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- CONFLICTS -->
+    <div class="section" id="conflicts">
+      <h2>Conflict Analysis</h2>
+      <p>Three files are touched by both PRs and local unstaged changes. All conflicts are <strong>additive</strong> — no logic conflicts exist.</p>
+
+      <table>
+        <thead><tr><th>File</th><th>Local (unstaged)</th><th>PR #339 adds</th><th>Conflict type</th></tr></thead>
+        <tbody>
+          <tr class="conflict-row">
+            <td><span class="file-tag">database_config.py</span></td>
+            <td><code>duckdb_memory_limit: str | None</code></td>
+            <td><code>fragmentation_threshold_pct: float | None</code></td>
+            <td><span class="badge badge-green">Additive — keep both</span></td>
+          </tr>
+          <tr class="conflict-row">
+            <td><span class="file-tag">database_provider.py</span></td>
+            <td><code>get_chunk_ids_and_file_paths()</code></td>
+            <td><code>compact_database()</code>, <code>measure_fragmentation()</code>, etc.</td>
+            <td><span class="badge badge-green">Additive — keep both</span></td>
+          </tr>
+          <tr class="conflict-row">
+            <td><span class="file-tag">connection_manager.py</span></td>
+            <td>Memory limit + insertion-order disable</td>
+            <td><code>_recover_interrupted_compaction()</code></td>
+            <td><span class="badge badge-green">Additive — non-overlapping</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="resolution">Config Design Divergence</h3>
+      <div class="callout callout-warn">
+        <strong>Design difference to resolve:</strong> The local branch has <code>compaction_enabled</code>, <code>compaction_threshold</code>, <code>compaction_min_size_mb</code>. PR #339 introduces <code>fragmentation_threshold_pct</code> as a single percentage trigger. These control different aspects — recommendation: <strong>add <code>fragmentation_threshold_pct</code> alongside the existing fields</strong>. The existing fields gate per-run size minimums; <code>fragmentation_threshold_pct</code> gates the auto-trigger.
+      </div>
+    </div>
+
+    <!-- INTEGRATION TASKS -->
+    <div class="section" id="task0">
+      <h2>Task 0 — Commit Local Unstaged Work</h2>
+      <p>All unstaged changes must be committed before starting integration. They are self-contained memory-efficiency improvements unrelated to either PR.</p>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Run smoke tests first</div>
+        <div class="task-body">
+          <pre>cd /home/e119870/views/g/my_chunkhound
+uv run pytest tests/test_smoke.py -v -n auto</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Commit memory-efficiency improvements</div>
+        <div class="task-body">
+          <pre>git add chunkhound/core/config/database_config.py \
+        chunkhound/interfaces/database_provider.py \
+        chunkhound/providers/database/duckdb/connection_manager.py \
+        chunkhound/providers/database/lancedb_provider.py \
+        chunkhound/services/embedding_service.py
+git commit -m "perf(db): duckdb memory limit, batch chunk fetch, lightweight chunk-id query"</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Commit OpenAI dimension bug fix</div>
+        <div class="task-body">
+          <pre>git add chunkhound/providers/embeddings/openai_provider.py
+git commit -m "fix(embeddings): pass output dimensions to OpenAI API (remove blocking condition)"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task1">
+      <h2>Task 1 — Complete PR #333 Protocol &amp; Config Gaps</h2>
+      <p>Fill the remaining Matryoshka gaps: protocol properties, <code>client_side_truncation</code> config, L2-normalize utilities, and factory wiring.</p>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Modify: <span class="file-tag">chunkhound/interfaces/embedding_provider.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/core/config/embedding_config.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/providers/embeddings/shared_utils.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/core/config/embedding_factory.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Add matryoshka properties to EmbeddingProvider protocol</div>
+        <div class="task-body">
+          <p>In <span class="file-tag">embedding_provider.py</span>, add after the <code>dims</code> property: <code>native_dims</code>, <code>supported_dimensions</code>, <code>output_dims</code>, <code>client_side_truncation</code> (see code in PR #333 section above).</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Add client_side_truncation to EmbeddingConfig</div>
+        <div class="task-body">
+          <p>Add field and cross-field validator (see code above). Validator must enforce that <code>client_side_truncation=True</code> requires <code>dimensions</code> to be non-None.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Add L2-normalize + truncation to shared_utils.py</div>
+        <div class="task-body">
+          <p>Add <code>l2_normalize()</code> and <code>apply_client_side_truncation()</code> (see code above). These are pure functions — no side effects.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">4</span> Wire client_side_truncation through factory</div>
+        <div class="task-body">
+          <p>In <span class="file-tag">embedding_factory.py</span>, pass <code>client_side_truncation=config.client_side_truncation</code> when constructing both OpenAI and VoyageAI providers. Both providers must accept this kwarg and apply <code>apply_client_side_truncation()</code> in their embed methods when the flag is set.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">5</span> Smoke test + commit</div>
+        <div class="task-body">
+          <pre>uv run pytest tests/test_smoke.py -v -n auto
+git add chunkhound/interfaces/embedding_provider.py \
+        chunkhound/core/config/embedding_config.py \
+        chunkhound/providers/embeddings/shared_utils.py \
+        chunkhound/core/config/embedding_factory.py
+git commit -m "feat(embeddings): complete matryoshka — client_side_truncation, protocol properties, L2-normalize"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task2">
+      <h2>Task 2 — PR #339: schema_constants.py</h2>
+      <p>Centralize all DuckDB DDL constants to eliminate hardcoded table/index names scattered across the provider.</p>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Create: <span class="file-tag">chunkhound/providers/database/duckdb/schema_constants.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/providers/database/duckdb/embedding_repository.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Create schema_constants.py</div>
+        <div class="task-body">
+          <pre><span class="hlc"># chunkhound/providers/database/duckdb/schema_constants.py</span>
+CHUNKS_TABLE = <span class="hly">"chunks"</span>
+FILES_TABLE = <span class="hly">"files"</span>
+EMBEDDINGS_TABLE = <span class="hly">"embeddings"</span>
+
+CHUNKHOUND_TABLES = (CHUNKS_TABLE, FILES_TABLE, EMBEDDINGS_TABLE)
+
+<span class="hlb">def</span> <span class="hlg">hnsw_index_name</span>(table: str) -> str:
+    <span class="hlb">return</span> <span class="hly">f"idx_{table}_embedding_hnsw"</span>
+
+<span class="hlc"># DDL strings for each canonical table (port from duckdb_provider.py)</span></pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Update embedding_repository.py</div>
+        <div class="task-body">
+          <p>Replace all hardcoded <code>"chunks"</code>, <code>"embeddings"</code>, <code>"idx_..."</code> strings with imports from <code>schema_constants</code>.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Commit</div>
+        <div class="task-body">
+          <pre>git add chunkhound/providers/database/duckdb/schema_constants.py \
+        chunkhound/providers/database/duckdb/embedding_repository.py
+git commit -m "refactor(db): centralize DuckDB DDL in schema_constants"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task3">
+      <h2>Task 3 — PR #339: Core Compaction in duckdb_provider.py</h2>
+      <p>The largest single task: add the three-phase atomic swap, fragmentation measurement, and HNSW index lifecycle methods to <code>duckdb_provider.py</code>. Also add the config field and interface methods.</p>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Modify: <span class="file-tag">chunkhound/providers/database/duckdb_provider.py</span> (+1098, -283)</li>
+        <li>Modify: <span class="file-tag">chunkhound/interfaces/database_provider.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/core/config/database_config.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Add fragmentation_threshold_pct to config</div>
+        <div class="task-body">
+          <pre>fragmentation_threshold_pct: float | None = Field(
+    default=<span class="hlg">30.0</span>,
+    ge=<span class="hlg">0.0</span>,
+    description=<span class="hly">"Auto-compaction trigger: % overhead above minimum live size. "</span>
+    <span class="hly">"30 = compact when DB is ~30% larger than live data. None = never auto-compact."</span>,
+)</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Add compaction interface methods</div>
+        <div class="task-body">
+          <p>In <span class="file-tag">database_provider.py</span>, add alongside <code>get_chunk_ids_and_file_paths()</code>:</p>
+          <pre><span class="hlb">def</span> <span class="hlg">compact_database</span>(self) -> int: ...          <span class="hlc"># returns new file size</span>
+<span class="hlb">def</span> <span class="hlg">measure_fragmentation</span>(self) -> float: ...    <span class="hlc"># ratio: actual/minimum</span>
+<span class="hlb">def</span> <span class="hlg">compact_if_needed</span>(self) -> bool: ...          <span class="hlc"># True if compaction ran</span>
+<span class="hlb">def</span> <span class="hlg">drop_hnsw_indexes</span>(self) -> None: ...
+<span class="hlb">def</span> <span class="hlg">ensure_hnsw_indexes</span>(self) -> None: ...</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Implement three-phase atomic compaction</div>
+        <div class="task-body">
+          <pre><span class="hlb">def</span> <span class="hlg">compact_database</span>(self) -> int:
+    <span class="hlc">"""Atomic three-phase rebuild: checkpoint → copy canonical tables → swap."""</span>
+    <span class="hlc"># Phase 1</span>
+    self._executor_checkpoint()
+    backup_path = self._executor_backup_database()
+    <span class="hlb">try</span>:
+        <span class="hlc"># Phase 2</span>
+        new_db_path = self._executor_rebuild_canonical_database()
+        <span class="hlc"># Phase 3</span>
+        self._executor_atomic_swap(new_db_path, backup_path)
+        self._executor_rebuild_indexes()
+    <span class="hlb">except</span> Exception:
+        <span class="hlc"># Restore backup on any failure</span>
+        <span class="hlb">if</span> backup_path.exists():
+            backup_path.replace(self._db_path)
+        <span class="hlb">raise</span>
+    <span class="hlb">finally</span>:
+        backup_path.unlink(missing_ok=<span class="hlg">True</span>)
+    <span class="hlb">return</span> os.path.getsize(self.db_path)</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">4</span> Implement fragmentation measurement</div>
+        <div class="task-body">
+          <p>Use three data points to estimate fragmentation ratio:</p>
+          <ul>
+            <li><code>PRAGMA database_size</code> — allocated file blocks</li>
+            <li><code>pragma_storage_info</code> — block-level allocation metadata</li>
+            <li><code>os.path.getsize()</code> — physical file size</li>
+          </ul>
+          <p style="margin-top:8px;">Health thresholds: <code>&lt; 1.5</code> = healthy, <code>&gt; 3.0</code> = fragmented, <code>&gt; 5.0</code> = critical</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">5</span> Smoke test + commit</div>
+        <div class="task-body">
+          <pre>uv run pytest tests/test_smoke.py -v -n auto
+git add chunkhound/providers/database/duckdb_provider.py \
+        chunkhound/interfaces/database_provider.py \
+        chunkhound/core/config/database_config.py
+git commit -m "feat(db): three-phase atomic compaction and fragmentation measurement"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task4">
+      <h2>Task 4 — PR #339: Crash Recovery + Windows Support</h2>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Modify: <span class="file-tag">chunkhound/providers/database/duckdb/connection_manager.py</span></li>
+        <li>Verify/modify: <span class="file-tag">chunkhound/utils/windows_constants.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Add _recover_interrupted_compaction()</div>
+        <div class="task-body">
+          <pre><span class="hlb">def</span> <span class="hlg">_recover_interrupted_compaction</span>(self) -> None:
+    <span class="hlc">"""On connection open: restore backup if a prior compaction was interrupted."""</span>
+    backup_path = Path(str(self._db_path) + <span class="hly">".compaction_backup"</span>)
+    <span class="hlb">if</span> backup_path.exists():
+        backup_path.replace(self._db_path)
+        logger.warning(<span class="hly">"Recovered from interrupted compaction — backup restored"</span>)</pre>
+          <p style="margin-top:8px;">Call <code>self._recover_interrupted_compaction()</code> at connection open time, before any DB operations.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Verify/add _unlink_compacted() in windows_constants.py</div>
+        <div class="task-body">
+          <p>Check if <code>_unlink_compacted()</code> already exists. If not, add:</p>
+          <pre><span class="hlb">def</span> <span class="hlg">_unlink_compacted</span>(path: Path) -> None:
+    <span class="hlc">"""Delete file with Windows handle delay retry (exponential backoff)."""</span>
+    <span class="hlb">for</span> attempt <span class="hlb">in</span> range(<span class="hlg">5</span>):
+        <span class="hlb">try</span>:
+            path.unlink(missing_ok=<span class="hlg">True</span>)
+            <span class="hlb">return</span>
+        <span class="hlb">except</span> OSError:
+            <span class="hlb">if</span> attempt < <span class="hlg">4</span>:
+                time.sleep(<span class="hlg">0.1</span> * (<span class="hlg">2</span> ** attempt))
+            <span class="hlb">else</span>:
+                <span class="hlb">raise</span></pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Commit</div>
+        <div class="task-body">
+          <pre>git add chunkhound/providers/database/duckdb/connection_manager.py \
+        chunkhound/utils/windows_constants.py
+git commit -m "fix(db): crash recovery for interrupted compaction + Windows handle retry"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task5">
+      <h2>Task 5 — PR #339: Probabilistic Auto-Compaction</h2>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Modify: <span class="file-tag">chunkhound/providers/database/serial_executor.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/providers/database/serial_database_provider.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Add probabilistic sampling in serial_executor.py</div>
+        <div class="task-body">
+          <pre>COMPACT_SAMPLE_INTERVAL = <span class="hlg">100</span>  <span class="hlc"># 1/100 writes trigger compaction check</span>
+
+<span class="hlb">def</span> <span class="hlg">_maybe_compact</span>(self) -> None:
+    <span class="hlb">import</span> random
+    <span class="hlb">if</span> random.randint(<span class="hlg">1</span>, COMPACT_SAMPLE_INTERVAL) == <span class="hlg">1</span>:
+        self._provider.compact_if_needed()</pre>
+          <p style="margin-top:8px;">Call <code>self._maybe_compact()</code> after write-path executor methods.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Add compaction block detection in serial_database_provider.py</div>
+        <div class="task-body">
+          <pre><span class="hlb">async def</span> <span class="hlg">_with_compaction_retry</span>(self, fn, max_retries=<span class="hlg">5</span>):
+    base_delay = <span class="hlg">0.1</span>
+    <span class="hlb">for</span> attempt <span class="hlb">in</span> range(max_retries):
+        <span class="hlb">try</span>:
+            <span class="hlb">return await</span> fn()
+        <span class="hlb">except</span> DatabaseCompactionInProgressError:
+            <span class="hlb">if</span> attempt == max_retries - <span class="hlg">1</span>:
+                <span class="hlb">raise</span>
+            <span class="hlb">await</span> asyncio.sleep(base_delay * (<span class="hlg">2</span> ** attempt))</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Commit</div>
+        <div class="task-body">
+          <pre>git add chunkhound/providers/database/serial_executor.py \
+        chunkhound/providers/database/serial_database_provider.py
+git commit -m "feat(db): probabilistic auto-compaction and exponential-backoff retry on compaction block"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task6">
+      <h2>Task 6 — PR #339: Service Layer (Mandatory Batch Boundaries)</h2>
+      <p>Enforce the two mandatory compaction boundaries in indexing: after chunking and after embedding. Also add realtime pipeline retry.</p>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Modify: <span class="file-tag">chunkhound/services/indexing_coordinator.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/services/directory_indexing_service.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/database.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/services/realtime/pipeline.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Add mandatory boundaries in indexing_coordinator.py</div>
+        <div class="task-body">
+          <pre><span class="hlb">async def</span> <span class="hlg">process_directory</span>(self, directory, patterns, exclude_patterns=None):
+    result = <span class="hlb">await</span> self._chunking_phase(directory, patterns, exclude_patterns)
+    <span class="hlb">await</span> self._run_batch_compaction_boundary()  <span class="hlc"># MANDATORY post-chunking</span>
+
+    result = <span class="hlb">await</span> self._embedding_phase(exclude_patterns)
+    <span class="hlb">await</span> self._run_batch_compaction_boundary()  <span class="hlc"># MANDATORY post-embedding</span>
+
+    <span class="hlb">return</span> result</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Mirror in directory_indexing_service.py and database.py</div>
+        <div class="task-body">
+          <p>Apply the same two-boundary pattern in the legacy <code>directory_indexing_service.py</code> workflow and the <code>Database.process_directory()</code> wrapper in <code>database.py</code>.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Add realtime mutation retry in pipeline.py</div>
+        <div class="task-body">
+          <pre><span class="hlb">async def</span> <span class="hlg">_try_mutation_with_compaction_retry</span>(self, mutation_fn):
+    max_retries, base_delay = <span class="hlg">5</span>, <span class="hlg">0.1</span>
+    <span class="hlb">for</span> attempt <span class="hlb">in</span> range(max_retries):
+        <span class="hlb">try</span>:
+            <span class="hlb">return await</span> mutation_fn()
+        <span class="hlb">except</span> DatabaseCompactionInProgressError:
+            <span class="hlb">if</span> attempt == max_retries - <span class="hlg">1</span>:
+                <span class="hlb">raise</span>
+            <span class="hlb">await</span> asyncio.sleep(base_delay * (<span class="hlg">2</span> ** attempt))</pre>
+          <p style="margin-top:8px;">Apply to all 5 mutation points: insert, upsert, delete, update file, delete file.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">4</span> Smoke test + commit</div>
+        <div class="task-body">
+          <pre>uv run pytest tests/test_smoke.py -v -n auto
+git add chunkhound/services/indexing_coordinator.py \
+        chunkhound/services/directory_indexing_service.py \
+        chunkhound/database.py \
+        chunkhound/services/realtime/pipeline.py
+git commit -m "feat(db): mandatory compaction boundaries post-chunk and post-embed, realtime retry"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task7">
+      <h2>Task 7 — PR #339: MCP Server Integration</h2>
+      <p>Decouple tool lifecycle from DB lifecycle so non-DB tools remain responsive during compaction.</p>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Modify: <span class="file-tag">chunkhound/mcp_server/base.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/mcp_server/tools.py</span></li>
+        <li>Modify: <span class="file-tag">chunkhound/mcp_server/stdio.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Add tool_requires_services() in tools.py</div>
+        <div class="task-body">
+          <pre><span class="hlb">import</span> inspect
+
+<span class="hlb">def</span> <span class="hlg">tool_requires_services</span>(tool_name: str) -> bool:
+    <span class="hlc">"""Introspect tool signature to check if it needs DB services."""</span>
+    tool = TOOL_REGISTRY[tool_name]
+    <span class="hlb">return</span> <span class="hly">"services"</span> <span class="hlb">in</span> inspect.signature(tool.implementation).parameters</pre>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Add ensure_tool_services() in base.py</div>
+        <div class="task-body">
+          <pre><span class="hlb">async def</span> <span class="hlg">ensure_tool_services</span>(self, tool_name: str) -> DatabaseServices:
+    <span class="hlc">"""Only reconnect DB for tools that actually need it."""</span>
+    <span class="hlb">if not</span> self.services:
+        <span class="hlb">raise</span> RuntimeError(<span class="hly">"Services not initialized."</span>)
+    <span class="hlb">if</span> tool_requires_services(tool_name):
+        <span class="hlb">await</span> self._connect_provider()
+    <span class="hlb">return</span> self.services</pre>
+          <p style="margin-top:8px;">Also handle <code>DatabaseCompactionInProgressError</code> — return a silent "retry later" response instead of error.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Update stdio.py</div>
+        <div class="task-body">
+          <p>Replace <code>ensure_services()</code> call with <code>ensure_tool_services(tool_name)</code>.</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">4</span> Commit</div>
+        <div class="task-body">
+          <pre>git add chunkhound/mcp_server/base.py \
+        chunkhound/mcp_server/tools.py \
+        chunkhound/mcp_server/stdio.py
+git commit -m "feat(mcp): ensure_tool_services — selective DB reconnect, silent compaction guard"</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="task8">
+      <h2>Task 8 — Port PR #339 Tests</h2>
+      <p>Port all test files from PR #339. These are contract tests, not implementation tests — they protect the atomic-swap guarantee, crash recovery, and HNSW preservation across compaction.</p>
+
+      <h3>Files</h3>
+      <ul>
+        <li>Create: <span class="file-tag">tests/test_duckdb_compaction.py</span> (~2158 lines)</li>
+        <li>Create: <span class="file-tag">tests/unit/test_realtime_compaction_retry.py</span> (~148 lines)</li>
+        <li>Modify: <span class="file-tag">tests/unit/conftest.py</span></li>
+      </ul>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">1</span> Port compaction contract tests</div>
+        <div class="task-body">
+          <p>Key test classes to port from PR #339:</p>
+          <ul>
+            <li>Three-phase swap contracts (backup exists, swap is atomic)</li>
+            <li>Crash recovery (backup → restore on next open)</li>
+            <li>HNSW index preservation through compaction</li>
+            <li>Windows atomic replace behavior (<code>_unlink_compacted</code>)</li>
+            <li>Fragmentation measurement thresholds (&lt;1.5 healthy, &gt;3.0 fragmented)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">2</span> Port realtime retry tests</div>
+        <div class="task-body">
+          <p>Exponential-backoff retry scenarios for each mutation point (5 retry attempts, 0.1s base delay doubling).</p>
+        </div>
+      </div>
+
+      <div class="task-block">
+        <div class="task-header"><span class="step-num">3</span> Run full suite + commit</div>
+        <div class="task-body">
+          <pre>uv run pytest tests/ -v
+git add tests/test_duckdb_compaction.py \
+        tests/unit/test_realtime_compaction_retry.py \
+        tests/unit/conftest.py
+git commit -m "test(db): compaction contract tests, HNSW preservation, realtime retry coverage"</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- VERIFICATION -->
+    <div class="section" id="verify">
+      <h2>Verification</h2>
+
+      <h3>Automated Checks</h3>
+      <pre><span class="hlc"># Type check (run during reviews)</span>
+uv run mypy chunkhound
+
+<span class="hlc"># Lint</span>
+uv run ruff check chunkhound
+
+<span class="hlc"># Smoke (MANDATORY before every commit)</span>
+uv run pytest tests/test_smoke.py -v -n auto
+
+<span class="hlc"># Full suite (MANDATORY before pushing to PR)</span>
+uv run pytest tests/ -v</pre>
+
+      <h3>End-to-End Manual Tests</h3>
+      <table>
+        <thead><tr><th>Scenario</th><th>Expected outcome</th></tr></thead>
+        <tbody>
+          <tr><td>Index mid-size repo, check fragmentation</td><td><code>measure_fragmentation()</code> returns ratio &gt; 1.0 after HNSW operations</td></tr>
+          <tr><td>Compact database</td><td>File size decreases; all search results identical before/after</td></tr>
+          <tr><td>Kill process during compaction, restart</td><td>DB intact; <code>_recover_interrupted_compaction()</code> restores backup</td></tr>
+          <tr><td>OpenAI <code>--dimensions 256</code></td><td>Returned embeddings have length 256</td></tr>
+          <tr><td>VoyageAI <code>--dimensions 512</code></td><td>Returned embeddings have length 512</td></tr>
+          <tr><td><code>client_side_truncation=True</code></td><td>Full vector from API, truncated+L2-normalized by client</td></tr>
+          <tr><td>MCP tools during compaction</td><td>Non-DB tools (git history, websearch) respond; DB tools wait/retry</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <footer>ChunkHound PR Integration Plan — PR #333 + PR #339 — 2026-06-16</footer>
+  </div>
+</div>
+</body>
+</html>

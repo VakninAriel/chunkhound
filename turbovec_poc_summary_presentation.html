@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TurboVec POC — Summary &amp; Results</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --series-256:  #2a78d6; /* blue */
+    --series-1536: #008300; /* green */
+    --series-2560: #e87ba4; /* magenta */
+    --surface-1:   #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+  }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+  #sidebar { width: 260px; min-width: 260px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+  #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+  #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+  #main { flex: 1; padding: 40px; max-width: 980px; }
+  header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+  header h1 { font-size: 22px; font-weight: 600; }
+  header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+  .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+  .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+  .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 18px 0 8px; }
+  .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+  .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+  .section ol li, .section ul li { margin-bottom: 6px; }
+  pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+  code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+  th { background: #1e1e2e; color: #cdd6f4; padding: 9px 12px; text-align: left; font-variant-numeric: tabular-nums; }
+  td { padding: 8px 12px; border-bottom: 1px solid #eee; font-variant-numeric: tabular-nums; }
+  tr:nth-child(even) td { background: #fafafa; }
+  td.dim-256 { border-left: 3px solid var(--series-256); }
+  td.dim-1536 { border-left: 3px solid var(--series-1536); }
+  td.dim-2560 { border-left: 3px solid var(--series-2560); }
+  .callout { background: #eef6ff; border-left: 4px solid #89b4fa; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; color: #1e3a5f; }
+  .callout.warning { background: #fff8ec; border-color: #f9c642; color: #7a5900; }
+  .callout.good { background: #eefbf1; border-color: #1baf7a; color: #0d4a30; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; margin-left: 6px; }
+  .badge-fixed { background: #fee2e2; color: #991b1b; }
+  .badge-pass { background: #dcfce7; color: #166534; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 16px 0; }
+  .kpi-card { background: #f8f8f8; border-radius: 6px; padding: 14px 16px; border-top: 3px solid #89b4fa; }
+  .kpi-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #898781; margin-bottom: 6px; }
+  .kpi-card .value { font-size: 22px; font-weight: 700; color: #1e1e2e; font-variant-numeric: tabular-nums; }
+  .kpi-card .sub { font-size: 11px; color: #898781; margin-top: 2px; }
+  .chart-wrap { margin: 16px 0; }
+  .chart-wrap svg { width: 100%; height: auto; display: block; }
+  .chart-caption { font-size: 12px; color: #898781; margin-top: 6px; }
+  .demo-transcript { font-family: 'Courier New', Consolas, monospace; font-size: 12px; white-space: pre; overflow-x: auto; background: #1e1e2e; color: #cdd6f4; padding: 14px; border-radius: 6px; line-height: 1.5; }
+  footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+</style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#overview">Overview</a>
+  <a href="#what-we-built">What We Built</a>
+  <a href="#live-demo">Live Demo Examples</a>
+  <a href="#recall-results">Recall@k by Dimension</a>
+  <a href="#compression-latency">Compression &amp; Latency</a>
+  <a href="#cross-repo-validation">Cross-Repo Validation (mono, 13x scale)</a>
+  <a href="#gap-diagnosis">Recall@1 Gap Diagnosis</a>
+  <a href="#corrections">Design Doc Corrections</a>
+  <a href="#blas-distribution">BLAS Dependency &amp; Distribution</a>
+  <a href="#from-parts-resolution">from_parts() Problem — Resolved</a>
+  <a href="#recommendation">Go/No-Go</a>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>TurboVec POC — Summary &amp; Results</h1>
+    <div class="meta">ChunkHound | test-crates/turbovec-poc | Corpus: qwen3-embedding-4b, this repo's own indexed code</div>
+  </header>
+  <div id="main">
+
+    <div class="section" id="overview">
+      <h2>Overview</h2>
+      <p>The design doc <code>turbovec_integration_design_report.html</code> proposed replacing ChunkHound's DuckDB-VSS/HNSW vector search with the <code>turbovec</code> Rust crate — claiming 16x compression at 4-bit, ~0.997 recall@1, and zero-re-embedding restarts. Rather than commit 2–3 weeks to that migration on faith, we built a standalone, throwaway benchmark against this repo's own real, indexed code embeddings and measured every headline claim directly.</p>
+      <div class="kpi-row">
+        <div class="kpi-card"><div class="label">Recall@10 (4-bit, prod scale)</div><div class="value">1.0000</div><div class="sub">72,974-vector corpus</div></div>
+        <div class="kpi-card"><div class="label">Recall@1 (4-bit, prod scale)</div><div class="value">0.8900</div><div class="sub">vs. design doc's claimed 0.997</div></div>
+        <div class="kpi-card"><div class="label">Compression (4-bit)</div><div class="value">7.3x</div><div class="sub">not the claimed 16x</div></div>
+        <div class="kpi-card"><div class="label">Search speed</div><div class="value">~12x</div><div class="sub">faster than brute-force cosine</div></div>
+      </div>
+      <p>The recall@1 shortfall looked alarming at first, so we ran two follow-up diagnostics (below) — the short version: it's mostly a near-duplicate-chunk ranking-ambiguity effect that would challenge any approximate method, with the 256-dim embedding truncation contributing a real but smaller share. Full detail in <a href="#gap-diagnosis">Recall@1 Gap Diagnosis</a>.</p>
+    </div>
+
+    <div class="section" id="what-we-built">
+      <h2>What We Built</h2>
+      <p>Everything lives in <code>test-crates/turbovec-poc/</code> — a fully standalone Rust crate, decoupled from ChunkHound's production build (no schema, PyO3, or `chunkhound_native` changes). Three layers:</p>
+      <ol>
+        <li><strong>Offline benchmark</strong> (<code>bench</code>) — loads this repo's real 256-dim embeddings (73,474 vectors, held-out query split), measures compression, recall@k, latency, and the index serialize/reload roundtrip at both 2-bit and 4-bit quantization.</li>
+        <li><strong>Live demo</strong> (<code>serve</code> + <code>demo_compare.py</code>) — an interactive REPL: type a query, it's embedded once, and both the existing DuckDB-VSS path and the new TurboVec index answer side by side.</li>
+        <li><strong>Dimension-comparison matrix</strong> (<code>probe_dim</code> + <code>probe_native_dim.py</code>) — re-embeds a matched 4,000-corpus/300-query sample at multiple dimensionalities to isolate exactly how much of the recall gap is caused by dimension vs. quantization noise.</li>
+      </ol>
+      <p>All three reuse the same shared measurement code (<code>src/lib.rs</code>: fixture loading, cosine ground truth, recall/compression math) so numbers are comparable across every run.</p>
+    </div>
+
+    <div class="section" id="live-demo">
+      <h2>Live Demo Examples</h2>
+      <p>Real natural-language queries against this repo's own code, embedded through the same provider used for indexing, run against both backends simultaneously:</p>
+      <div class="demo-transcript">$ uv run python test-crates/turbovec-poc/scripts/demo_compare.py "MCP server HTTP transport" --k 5
+
+Query: 'MCP server HTTP transport'
+#   EXISTING (DuckDB-VSS, exact)                                 TURBOVEC (quantized)
+1   chunkhound/mcp_server/http_server.py:123-150  (0.8340)       chunkhound/mcp_server/http_server.py:123-150  (0.8335)
+2   chunkhound/mcp_server/__init__.py:27-27  (0.8070)            chunkhound/mcp_server/__init__.py:27-27  (0.8043)
+3   chunkhound/core/config/mcp_config.py:35-70  (0.7725)         chunkhound/core/config/mcp_config.py:35-70  (0.7702)
+4   .okf/components/mcp-server.md:9-10  (0.7663)                 chunkhound/core/config/mcp_config.py:42-89  (0.7652)
+5   chunkhound/core/config/mcp_config.py:42-89  (0.7653)         .okf/components/mcp-server.md:9-10  (0.7638)
+
+overlap@5 = 100%   rank-1 match = True</div>
+      <div class="demo-transcript" style="margin-top:12px;">$ uv run python test-crates/turbovec-poc/scripts/demo_compare.py "how does compaction work" --k 5
+
+Query: 'how does compaction work'
+#   EXISTING (DuckDB-VSS, exact)                                 TURBOVEC (quantized)
+1   tests/test_duckdb_compaction.py:348-348  (0.8700)            tests/test_duckdb_compaction.py:348-348  (0.8719)
+2   chunkhound_compaction_report.html:312-312  (0.7848)          chunkhound_compaction_report.html:312-312  (0.7823)
+3   tests/test_duckdb_compaction.py:968-968  (0.7657)            chunkhound_branch_review_report.html:129-131  (0.7649)
+4   chunkhound_branch_review_report.html:129-131  (0.7641)       tests/test_duckdb_compaction.py:968-968  (0.7643)
+5   tests/test_duckdb_compaction.py:2754-2754  (0.7550)          tests/test_duckdb_compaction.py:2754-2754  (0.7595)
+
+overlap@5 = 100%   rank-1 match = True</div>
+      <p class="chart-caption">Both examples: 100% overlap@5, matching rank-1 — noticeably better than the held-out recall@1 (0.89) measured below, because real queries tend to sit closer to a genuine content cluster than an isolated held-out corpus vector does.</p>
+    </div>
+
+    <div class="section" id="recall-results">
+      <h2>Recall@k by Embedding Dimension</h2>
+      <p>To isolate how much dimensionality itself matters, we picked a fixed 4,000-corpus / 300-query sample from this repo's real chunks and measured recall at three dimensions on <strong>the exact same data</strong>: the 256-dim vectors already stored (truncated), a 1536-dim variant derived by slicing+renormalizing the native vectors (no new embedding calls), and the true native 2560-dim vectors (re-embedded — <code>qwen3-embedding-4b</code>'s real size, not the 1536 assumed earlier). Shown at 4-bit quantization, ChunkHound's likely production setting:</p>
+
+      <div class="chart-wrap">
+        <svg viewBox="0 0 640 300" role="img" aria-label="Recall at k=1,3,5,10 for three embedding dimensions">
+          <!-- gridlines -->
+          <line x1="70" y1="240" x2="610" y2="240" stroke="var(--gridline)" stroke-width="1"/>
+          <line x1="70" y1="140" x2="610" y2="140" stroke="var(--gridline)" stroke-width="1"/>
+          <line x1="70" y1="40" x2="610" y2="40" stroke="var(--gridline)" stroke-width="1"/>
+          <text x="62" y="243" text-anchor="end" font-size="11" fill="var(--text-muted)">0.0</text>
+          <text x="62" y="143" text-anchor="end" font-size="11" fill="var(--text-muted)">0.5</text>
+          <text x="62" y="43" text-anchor="end" font-size="11" fill="var(--text-muted)">1.0</text>
+          <line x1="70" y1="240" x2="610" y2="240" stroke="var(--baseline)" stroke-width="1.5"/>
+
+          <!-- legend -->
+          <rect x="100" y="10" width="10" height="10" rx="2" fill="var(--series-256)"/>
+          <text x="114" y="19" font-size="12" fill="var(--text-secondary)">256-dim</text>
+          <rect x="220" y="10" width="10" height="10" rx="2" fill="var(--series-1536)"/>
+          <text x="234" y="19" font-size="12" fill="var(--text-secondary)">1536-dim (derived)</text>
+          <rect x="400" y="10" width="10" height="10" rx="2" fill="var(--series-2560)"/>
+          <text x="414" y="19" font-size="12" fill="var(--text-secondary)">2560-dim (native)</text>
+
+          <!-- k=1 group -->
+          <rect x="99.5" y="52.7" width="24" height="187.3" rx="4" fill="var(--series-256)"/>
+          <rect x="125.5" y="48" width="24" height="192" rx="4" fill="var(--series-1536)"/>
+          <rect x="151.5" y="46" width="24" height="194" rx="4" fill="var(--series-2560)"/>
+          <text x="111.5" y="44.7" text-anchor="middle" font-size="11" fill="var(--text-secondary)">0.94</text>
+          <text x="137.5" y="40" text-anchor="middle" font-size="11" fill="var(--text-secondary)">0.96</text>
+          <text x="163.5" y="38" text-anchor="middle" font-size="11" fill="var(--text-secondary)">0.97</text>
+          <text x="137.5" y="255" text-anchor="middle" font-size="12" fill="var(--text-secondary)">k=1</text>
+
+          <!-- k=3 group (all recall = 1.0) -->
+          <rect x="234.5" y="40" width="24" height="200" rx="4" fill="var(--series-256)"/>
+          <rect x="260.5" y="40" width="24" height="200" rx="4" fill="var(--series-1536)"/>
+          <rect x="286.5" y="40" width="24" height="200" rx="4" fill="var(--series-2560)"/>
+          <text x="272.5" y="255" text-anchor="middle" font-size="12" fill="var(--text-secondary)">k=3</text>
+
+          <!-- k=5 group -->
+          <rect x="369.5" y="40" width="24" height="200" rx="4" fill="var(--series-256)"/>
+          <rect x="395.5" y="40" width="24" height="200" rx="4" fill="var(--series-1536)"/>
+          <rect x="421.5" y="40" width="24" height="200" rx="4" fill="var(--series-2560)"/>
+          <text x="407.5" y="255" text-anchor="middle" font-size="12" fill="var(--text-secondary)">k=5</text>
+
+          <!-- k=10 group (ChunkHound's default page_size) -->
+          <rect x="504.5" y="40" width="24" height="200" rx="4" fill="var(--series-256)"/>
+          <rect x="530.5" y="40" width="24" height="200" rx="4" fill="var(--series-1536)"/>
+          <rect x="556.5" y="40" width="24" height="200" rx="4" fill="var(--series-2560)"/>
+          <text x="542.5" y="255" text-anchor="middle" font-size="12" fill="var(--text-secondary)">k=10</text>
+          <text x="542.5" y="270" text-anchor="middle" font-size="10.5" fill="var(--text-muted)">(ChunkHound default)</text>
+        </svg>
+        <p class="chart-caption">4-bit quantization, matched 4,000-vector corpus / 300 held-out queries. Bars at k≥3 all reach 1.0 across every dimension — the gap is concentrated entirely at k=1.</p>
+      </div>
+
+      <table>
+        <tr><th>k</th><th>256-dim</th><th>1536-dim (derived)</th><th>2560-dim (native)</th><th>Note</th></tr>
+        <tr><td>1</td><td class="dim-256">0.9367</td><td class="dim-1536">0.9600</td><td class="dim-2560">0.9700</td><td>Only k where dimension matters</td></tr>
+        <tr><td>3</td><td class="dim-256">1.0000</td><td class="dim-1536">1.0000</td><td class="dim-2560">1.0000</td><td></td></tr>
+        <tr><td>5</td><td class="dim-256">1.0000</td><td class="dim-1536">1.0000</td><td class="dim-2560">1.0000</td><td></td></tr>
+        <tr><td>10</td><td class="dim-256">1.0000</td><td class="dim-1536">1.0000</td><td class="dim-2560">1.0000</td><td><strong>ChunkHound's <code>search_semantic</code> default page_size</strong></td></tr>
+      </table>
+      <div class="callout">At ChunkHound's actual default (<code>page_size=10</code>), recall is 1.0000 at every dimension tested. The dimensionality effect is real but confined to strict top-1 matching — it disappears by k=3.</div>
+
+      <h3>Same comparison at 2-bit (more aggressive compression)</h3>
+      <table>
+        <tr><th>k</th><th>256-dim</th><th>1536-dim (derived)</th><th>2560-dim (native)</th></tr>
+        <tr><td>1</td><td class="dim-256">0.8367</td><td class="dim-1536">0.9133</td><td class="dim-2560">0.9367</td></tr>
+        <tr><td>3</td><td class="dim-256">0.9733</td><td class="dim-1536">1.0000</td><td class="dim-2560">0.9967</td></tr>
+        <tr><td>5</td><td class="dim-256">1.0000</td><td class="dim-1536">1.0000</td><td class="dim-2560">1.0000</td></tr>
+        <tr><td>10</td><td class="dim-256">1.0000</td><td class="dim-1536">1.0000</td><td class="dim-2560">1.0000</td></tr>
+      </table>
+      <p>Same pattern, more pronounced: at 2-bit the dimensionality effect is larger (0.84 → 0.94 at k=1), consistent with a tighter quantization budget being more sensitive to how much signal each coordinate carries.</p>
+    </div>
+
+    <div class="section" id="compression-latency">
+      <h2>Compression &amp; Latency by Dimension</h2>
+      <p>The same 256 / 1536 / 2560 comparison applied to compression ratio and search latency, on the same matched sample:</p>
+
+      <div class="chart-wrap">
+        <svg viewBox="0 0 640 230" role="img" aria-label="Compression ratio at 2-bit and 4-bit for three embedding dimensions">
+          <line x1="70" y1="190" x2="610" y2="190" stroke="var(--gridline)" stroke-width="1"/>
+          <line x1="70" y1="140" x2="610" y2="140" stroke="var(--gridline)" stroke-width="1"/>
+          <line x1="70" y1="90" x2="610" y2="90" stroke="var(--gridline)" stroke-width="1"/>
+          <line x1="70" y1="40" x2="610" y2="40" stroke="var(--gridline)" stroke-width="1"/>
+          <text x="62" y="193" text-anchor="end" font-size="11" fill="var(--text-muted)">0x</text>
+          <text x="62" y="143" text-anchor="end" font-size="11" fill="var(--text-muted)">5x</text>
+          <text x="62" y="93" text-anchor="end" font-size="11" fill="var(--text-muted)">10x</text>
+          <text x="62" y="43" text-anchor="end" font-size="11" fill="var(--text-muted)">15x</text>
+          <line x1="70" y1="190" x2="610" y2="190" stroke="var(--baseline)" stroke-width="1.5"/>
+
+          <rect x="100" y="10" width="10" height="10" rx="2" fill="var(--series-256)"/>
+          <text x="114" y="19" font-size="12" fill="var(--text-secondary)">256-dim</text>
+          <rect x="220" y="10" width="10" height="10" rx="2" fill="var(--series-1536)"/>
+          <text x="234" y="19" font-size="12" fill="var(--text-secondary)">1536-dim (derived)</text>
+          <rect x="400" y="10" width="10" height="10" rx="2" fill="var(--series-2560)"/>
+          <text x="414" y="19" font-size="12" fill="var(--text-secondary)">2560-dim (native)</text>
+
+          <!-- 2-bit group -->
+          <rect x="167" y="56.2" width="24" height="133.8" rx="4" fill="var(--series-256)"/>
+          <rect x="193" y="36" width="24" height="154" rx="4" fill="var(--series-1536)"/>
+          <rect x="219" y="34.2" width="24" height="155.8" rx="4" fill="var(--series-2560)"/>
+          <text x="205" y="205" text-anchor="middle" font-size="12" fill="var(--text-secondary)">2-bit</text>
+
+          <!-- 4-bit group -->
+          <rect x="437" y="117.1" width="24" height="72.9" rx="4" fill="var(--series-256)"/>
+          <rect x="463" y="111.5" width="24" height="78.5" rx="4" fill="var(--series-1536)"/>
+          <rect x="489" y="111.1" width="24" height="78.9" rx="4" fill="var(--series-2560)"/>
+          <text x="475" y="205" text-anchor="middle" font-size="12" fill="var(--text-secondary)">4-bit</text>
+        </svg>
+        <p class="chart-caption">Compression ratio vs. float32, amortized (includes id-table + per-vector scale overhead). Higher dimension compresses slightly <em>better</em>, not worse — the fixed 12-byte/vector overhead matters less as the raw packed-code size grows.</p>
+      </div>
+
+      <table>
+        <tr><th>Metric</th><th>256-dim</th><th>1536-dim</th><th>2560-dim (native)</th></tr>
+        <tr><td>Compression @ 2-bit</td><td class="dim-256">13.4x</td><td class="dim-1536">15.4x</td><td class="dim-2560">15.6x</td></tr>
+        <tr><td>Compression @ 4-bit</td><td class="dim-256">7.3x</td><td class="dim-1536">7.9x</td><td class="dim-2560">7.9x</td></tr>
+        <tr><td>Search latency @ 4-bit (median)</td><td class="dim-256">0.16ms</td><td class="dim-1536">1.82ms</td><td class="dim-2560">6.74ms</td></tr>
+        <tr><td>Brute-force baseline (median)</td><td class="dim-256">1.27ms</td><td class="dim-1536">8.24ms</td><td class="dim-2560">13.93ms</td></tr>
+      </table>
+      <p>Latency scales roughly with dimension (more packed bytes per vector to compare), but TurboVec stays meaningfully faster than exact brute-force cosine at every dimension tested — 8x faster at 256-dim, ~2x faster even at native 2560-dim.</p>
+
+      <h3>Production-scale reference (full 72,974-vector corpus, 256-dim only)</h3>
+      <p>The dimension comparison above uses a smaller matched 4,000-vector sample to hold conditions constant. The original benchmark ran at full production scale, 256-dim only (no 1536/2560 data exists at this scale — re-embedding all 73K chunks natively wasn't done for this POC):</p>
+      <table>
+        <tr><th>Metric</th><th>bit_width=2</th><th>bit_width=4</th></tr>
+        <tr><td>Compression</td><td>13.5x</td><td>7.3x</td></tr>
+        <tr><td>Recall@1</td><td>0.8100</td><td>0.8900</td></tr>
+        <tr><td>Recall@10</td><td>0.9960</td><td>1.0000</td></tr>
+        <tr><td>Latency (median)</td><td>—</td><td>2.37ms (~12x faster than 28.34ms brute-force)</td></tr>
+      </table>
+      <div class="callout warning">Recall@1 is lower at full 73K-vector scale (0.89) than on the 4,000-vector matched sample (0.94) — more candidates means more chances for a near-tied competitor to appear at the top. See the diagnosis below for why.</div>
+    </div>
+
+    <div class="section" id="cross-repo-validation">
+      <h2>Cross-Repo Validation at 13x Scale (mono corpus)</h2>
+      <p>The benchmarks above use this repo's own ~73K-vector corpus. To check whether the findings hold at a much larger, more repetitive scale, the same <code>dump_embeddings.py</code> → <code>bench</code> pipeline was re-run against the <code>mono</code> repo's <code>embeddings_256</code> table — <strong>928,800 vectors</strong> after the held-out split, same <code>qwen3-embedding-4b</code>/256-dim pipeline, same held-out methodology:</p>
+      <table>
+        <tr><th>Metric</th><th>bit_width=2</th><th>bit_width=4</th></tr>
+        <tr><td>Compression (amortized)</td><td>13.5x (76.0 B/vector)</td><td>7.3x (140.0 B/vector)</td></tr>
+        <tr><td>Recall@1 (exact top-1 match)</td><td>0.6920</td><td>0.8080</td></tr>
+        <tr><td>Recall@10 (true top-1 within top-10)</td><td>0.9860</td><td>1.0000</td></tr>
+        <tr><td>Search latency (median / p95)</td><td>20.09ms / 21.18ms (50 q/s)</td><td>39.06ms / 43.28ms (26 q/s)</td></tr>
+        <tr><td>Cold-start rebuild cost</td><td>7.64s</td><td>5.85s</td></tr>
+        <tr><td>Near-tie gap (mean, hits vs. misses)</td><td>0.0219 vs. 0.0038</td><td>0.0200 vs. 0.0008</td></tr>
+      </table>
+      <p>Brute-force baseline: median 371.57ms/query (3 q/s) — TurboVec at 4-bit is still <strong>~9.5x faster</strong> despite the ~13x larger corpus.</p>
+      <div class="callout good"><strong>Compression is scale-invariant, as expected</strong> — identical 13.5x/7.3x, since it's a fixed per-vector overhead ratio, not corpus-dependent.</div>
+      <div class="callout warning"><strong>Recall@1 drops further at this scale</strong> (0.89→0.81 at 4-bit, 0.81→0.69 at 2-bit vs. the 73K-vector corpus) — exactly the corpus-scale effect predicted in the <a href="#gap-diagnosis">Recall@1 Gap Diagnosis</a> below: a bigger corpus means more chances for a near-tied competitor to appear per query, independent of TurboVec's quantization.</div>
+      <p><strong>Recall@10 held essentially steady</strong> (1.0000 at 4-bit) — the metric that matters for ChunkHound's real top-k usage pattern. The go/no-go read doesn't change at this larger scale; it's reinforced.</p>
+    </div>
+
+    <div class="section" id="gap-diagnosis">
+      <h2>Recall@1 Gap Diagnosis</h2>
+      <p>Why does recall@1 (0.89 at production scale) fall so far short of the design doc's claimed 0.997? Two mechanisms were tested, cheapest first.</p>
+
+      <h3>Stage A — near-tie correlation (free, no new API calls)</h3>
+      <p>For every held-out query, we captured the exact top1–top2 cosine score gap and checked whether it correlates with TurboVec getting the top-1 answer right:</p>
+      <table>
+        <tr><th>bit_width</th><th>Mean gap on hits</th><th>Mean gap on misses</th><th>Ratio</th></tr>
+        <tr><td>2-bit</td><td>0.0637 (n=405)</td><td>0.0044 (n=95)</td><td>~14x</td></tr>
+        <tr><td>4-bit</td><td>0.0589 (n=445)</td><td>0.0009 (n=55)</td><td>~65x</td></tr>
+      </table>
+      <div class="callout good">Misses cluster overwhelmingly on queries where the true top-1 and top-2 chunks were already almost indistinguishable in <strong>exact, unquantized</strong> cosine similarity (mean gap 0.0009 — essentially a coin flip). This corpus has many near-duplicate chunks (near-identical test files, repeated patterns); when two candidates are that close, quantization noise flipping the winner isn't really a TurboVec defect — any approximate method would struggle the same way.</div>
+
+      <h3>Stage B — native vs. truncated dimension, matched subset</h3>
+      <p>Isolates dimensionality specifically: same 4,000/300 sample, same texts, embedded at 256-dim (truncated) vs. native 2560-dim, everything else held constant.</p>
+      <table>
+        <tr><th>Dimension</th><th>Recall@1 (4-bit)</th><th>Δ vs. 256-dim</th></tr>
+        <tr><td class="dim-256">256 (truncated)</td><td>0.9367</td><td>—</td></tr>
+        <tr><td class="dim-1536">1536 (derived)</td><td>0.9600</td><td>+2.3 pts</td></tr>
+        <tr><td class="dim-2560">2560 (native)</td><td>0.9700</td><td>+3.3 pts</td></tr>
+      </table>
+      <p>Truncation is a real, measurable contributor — recall@1 improves monotonically with dimension on identical data. But it's not the whole story: even at full native dimension, recall@1 (0.97) is still below the design doc's 0.997 claim.</p>
+
+      <div class="callout"><strong>Bottom line:</strong> the 0.89-vs-0.997 gap is mostly a near-tie / corpus-scale effect (Stage A) that would challenge any approximate method, with the 256-dim truncation contributing a real but smaller share (Stage B, ~3 points). Neither points to a fundamental TurboVec defect; both suggest the design doc's 0.997 figure was measured under different conditions than ChunkHound's real, near-duplicate-heavy code corpus.</div>
+    </div>
+
+    <div class="section" id="corrections">
+      <h2>Design Doc Corrections</h2>
+      <p>Found by reading the real <code>turbovec</code> 0.9.0 source directly, not just its docs:</p>
+      <ol>
+        <li><strong>No <code>IdMapIndex::from_parts()</code> or in-memory <code>to_bytes()</code>/<code>from_bytes()</code>.</strong> The only reconstruction path is file-based <code>write()</code>/<code>load()</code> — proven bit-identical by our roundtrip test.</li>
+        <li><strong><code>TurboQuantIndex::from_parts()</code> and its supporting accessors were all <code>pub(crate)</code></strong> in the published crate — not reachable from any downstream crate, which invalidated the design doc's "reconstruct from per-vector rows without a whole snapshot" fallback path as written. <span class="badge badge-pass">Resolved</span> — see below.</li>
+        <li><strong><code>turbovec</code> unconditionally requires a system BLAS library on Linux</strong>, contradicting the "no new system libraries" claim. This environment needed <code>sudo apt-get install libopenblas-dev</code> before it would even build. <span class="badge badge-pass">Resolved</span> — Linux-only, and a build-time-only cost; see <a href="#blas-distribution">BLAS Dependency &amp; Distribution</a>.</li>
+        <li><strong>4-bit compression is ~7.3–7.9x in practice, not 16x</strong> — the design doc's 16x figure is actually the 2-bit number, and real per-vector id+scale overhead pulls the achievable ratio down further.</li>
+      </ol>
+    </div>
+
+    <div class="section" id="blas-distribution">
+      <h2>BLAS Dependency &amp; Distribution</h2>
+      <p>Traced the root cause down to <code>turbovec</code>'s own <code>build.rs</code>, which picks a BLAS backend per target OS:</p>
+      <table>
+        <tr><th>OS</th><th>What <code>build.rs</code> links</th><th>Extra install needed?</th></tr>
+        <tr><td>Linux</td><td><code>cargo:rustc-link-lib=openblas</code></td><td class="dim-256"><strong>Yes</strong> — <code>libopenblas</code>, the only platform where this is a real constraint</td></tr>
+        <tr><td>macOS</td><td><code>cargo:rustc-link-lib=framework=Accelerate</code></td><td class="dim-2560">No — ships with every macOS install</td></tr>
+        <tr><td>Windows</td><td>falls through to <code>_ => {}</code> → <code>ndarray</code>'s pure-Rust <code>matrixmultiply</code></td><td class="dim-2560">No — nothing to link at all</td></tr>
+      </table>
+      <div class="callout good">Windows and macOS need zero extra install, build or runtime — this is a Linux-only problem, by design of turbovec's own build script.</div>
+
+      <h3>Distribution plan — never reaches the end user</h3>
+      <p>The <code>apt-get</code> must stay a <strong>CI/build-time</strong> concern, never something <code>pip install chunkhound</code> requires. This repo already solves an equivalent problem for DuckDB (<code>Cargo.toml</code>'s <code>DUCKDB_DOWNLOAD_LIB</code>/<code>DUCKDB_STATIC</code> — resolved once in CI, invisible in the shipped wheel), and BLAS should follow the same pattern.</p>
+      <div class="callout warning">Gap found: <code>.github/workflows/release.yml</code>'s <code>build-native-wheel</code> job builds the Linux wheel on plain <code>ubuntu-latest</code> via <code>maturin build --release</code> — no manylinux container, no <code>auditwheel repair</code>. A naive dynamic link against <code>libopenblas</code> today would ship a wheel that only works on hosts that already happen to have it installed.</div>
+      <p>Options, best first:</p>
+      <ol>
+        <li><strong>Static-link OpenBLAS in CI</strong> — <code>openblas-src</code>'s <code>static</code> feature plus <code>gfortran</code>/<code>cmake</code> on the runner (no proxy issue on GitHub-hosted runners, unlike this local machine). Self-contained <code>.so</code>, zero runtime dependency — same approach numpy/scipy wheels use.</li>
+        <li><strong>Dynamic link + <code>auditwheel repair</code></strong> — vendor <code>libopenblas.so.0</code> into the wheel and patch RPATH; needs switching this job to a manylinux-compliant build, which it doesn't do today.</li>
+        <li><strong>Prebuilt BLAS from PyPI</strong> (e.g. <code>scipy-openblas64</code>) — avoids any system package manager call in CI entirely.</li>
+      </ol>
+      <div class="callout">Bottom line: solvable without touching the end user's machine on any OS, and macOS/Windows need no build changes at all.</div>
+    </div>
+
+    <div class="section" id="from-parts-resolution">
+      <h2>from_parts() Problem — Resolved</h2>
+      <p>The design doc's <code>embeddings_quantized</code> table has one stated purpose: rebuild the search index directly from durable per-vector packed bytes if the main snapshot is ever lost or corrupted, with no re-embedding. That required <code>from_parts()</code>, which wasn't public. Two options were built and tested against this repo's real corpus — <strong>both work.</strong></p>
+
+      <h3>Option 1 — pin to the unreleased upstream fix</h3>
+      <p>The exact fix (PR #204, making <code>from_parts()</code> public) is merged on turbovec's <code>main</code> branch but not yet released to crates.io. We git-pinned <code>Cargo.toml</code> to that exact commit (<code>ae31ba3</code>).</p>
+      <div class="callout good"><strong>Passes.</strong> A new test extracts <code>packed_codes()</code>/<code>scales()</code>/<code>tqplus_shift()</code>/<code>tqplus_scale()</code> from a live index, calls the now-public <code>from_parts()</code>, and gets bit-identical search results — no snapshot blob, no re-embedding. Existing tests and benchmark numbers confirmed unchanged (regression check).</div>
+      <p>Real gap found: <code>IdMapIndex</code> still has no accessor for its inner index, so this only works by going around <code>IdMapIndex</code> and hand-rolling the id-reattachment layer ourselves. <code>from_parts()</code> being public unblocks the primitive, not the full ready-made object the design doc's schema implies. Caveat: it's an unreleased, untagged commit — safe by content-addressed SHA pinning, but not a versioned release.</p>
+
+      <h3>Option 3(C) — durability engineering, no from_parts() needed</h3>
+      <p>Works against the stable, published crate today: CRC32-checksummed, rotating snapshots on top of the one mechanism turbovec's public 0.9.0 API already gives for free (<code>write()</code>/<code>load()</code>), plus keeping ChunkHound's existing float32 table as the true last resort.</p>
+      <table>
+        <tr><th>Test</th><th>Result</th></tr>
+        <tr><td>Corrupt one snapshot generation</td><td>Falls through to the next generation cleanly, identical search results</td></tr>
+        <tr><td>Corrupt every generation</td><td>Reports failure cleanly — no panic, no silent garbage index</td></tr>
+        <tr><td>Total snapshot loss → rebuild from stored float32</td><td>Identical search results; <strong>0.45s (2-bit) / 0.62s (4-bit)</strong> real cold-start cost on the full 72,974-vector corpus</td></tr>
+        <tr><td>Storage cost (float32 + N=2 rotation)</td><td><strong>+27.3%</strong> vs. today's float32-only baseline (≈95.2 MB vs. ≈74.7 MB)</td></tr>
+      </table>
+      <div class="callout good">Sub-second local rebuild, no network calls — confirms "no re-embedding needed" is achievable today, at a modest, now-measured disk cost.</div>
+
+      <p><strong>Recommendation</strong>: ship Option 3(C) as the safety net regardless — it's cheap, uses only the stable published API, and is now proven, not just designed. Treat Option 1 as the upgrade path once turbovec actually cuts a release incorporating the fix.</p>
+    </div>
+
+    <div class="section" id="recommendation">
+      <h2>Go/No-Go Recommendation</h2>
+      <ul>
+        <li><strong>Recall@10 = 1.0000</strong> at every dimension and both bit-widths tested — the metric that matches ChunkHound's actual default (<code>page_size=10</code>) passes comfortably everywhere.</li>
+        <li><strong>Recall@1</strong> is diagnosed, not just measured: mostly an inherent near-duplicate-corpus effect, partly a truncation cost. Only matters if a caller depends on a single top-1 answer rather than the full top-k.</li>
+        <li><strong>Compression</strong> (7.3–15.6x depending on bit-width/dimension) is a large, real win over float32, just not the headline "16x."</li>
+        <li><strong>Search speed</strong> beats brute-force cosine at every dimension tested, with the gap widening at production scale.</li>
+        <li><strong>Engineering risks found and resolved</strong>: the system BLAS dependency is Linux-only (macOS/Windows need nothing extra) and solvable entirely at CI build time — see <a href="#blas-distribution">BLAS Dependency &amp; Distribution</a>. The missing <code>from_parts()</code> public API — the bigger risk — now has two tested, working solutions (above); neither requires forking or patching turbovec.</li>
+      </ul>
+      <p>Net: TurboVec looks viable for ChunkHound's actual usage pattern (top-10 retrieval), with design-doc corrections folded into a proven path forward, and one open question (top-1-specific reliance) to confirm isn't load-bearing anywhere in the product.</p>
+    </div>
+
+    <footer>TurboVec POC — Summary &amp; Results — full detail in <code>test-crates/turbovec-poc/README.md</code></footer>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound Per-User Analytics — Design Proposal (ALGINF-5738)</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 240px; min-width: 240px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+    #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+    #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #main { flex: 1; padding: 40px; max-width: 900px; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+    header h1 { font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+    .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 16px 0 8px; }
+    .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+    .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; }
+    summary { padding: 12px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 6px; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }
+    details > *:not(summary) { padding: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; background: #e6f0ff; color: #1e5cb3; margin-left: 8px; }
+    .badge.decision { background: #eafbea; color: #1c7c2c; }
+    .badge.nongoal { background: #fdecea; color: #b3261e; }
+    .badge.new { background: #fff4e0; color: #a15c00; }
+    .badge.revised { background: #eee6ff; color: #5b21b6; }
+    .badge.superseded { background: #f1f1f1; color: #666; text-decoration: line-through; }
+    .mermaid { background: #fff; padding: 16px; border-radius: 6px; margin: 12px 0; text-align: center; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+  </style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#context">Context</a>
+  <a href="#decisions">Key Design Decisions</a>
+  <a href="#diagrams">Architecture &amp; Flow</a>
+  <a href="#architecture">Architecture Detail</a>
+  <a href="#concurrency">Concurrency &amp; Collision Prevention</a>
+  <a href="#privacy">Privacy</a>
+  <a href="#hooks">Hook Points (MCP + CLI)</a>
+  <a href="#data-model">Data Model</a>
+  <a href="#configuration">Configuration</a>
+  <a href="#non-goals">Non-Goals</a>
+  <a href="#authorization">Authorization &amp; Trust Model</a>
+  <a href="#testing">Testing</a>
+  <a href="#verification">Verification</a>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>ChunkHound Per-User Analytics — Design Proposal</h1>
+    <div class="meta">ALGINF-5738 | Epic: ALGINF-5393 (GenAI &amp; ChunkHound Developments — Q4_2026) | Generated: 2026-08-27 (rev. 6 — per-vendor call/error metrics) | Status: Pending Approval</div>
+  </header>
+  <div id="main">
+
+    <div class="section" id="context">
+      <h2>Context</h2>
+      <p>
+        <a href="https://pdc-amat-prod.atlassian.net/browse/ALGINF-5738" target="_blank">ALGINF-5738</a> ("ChunkHound Per-User Analytics", requested by Nir S.) asks for visibility into who uses ChunkHound, how much, and what it costs per user — specifically: per-user counts of MCP tool usage by type, plus requests made to LLM, embedding, and reranker providers.
+      </p>
+      <p style="margin-top:10px;">
+        The ticket itself leaves two questions explicitly open: <em>"How to identify user?"</em> and <em>"Where do we store the data?"</em> It also names a prerequisite, <strong>ALGINF-5804</strong> ("ChunkHound Configuration Auto-Update"), needed for org-wide rollout — that ticket is still TBD/unscoped, so this design does <strong>not</strong> block on it. Analytics is treated as manually opt-in for now and can be flipped on centrally later once ALGINF-5804 exists.
+      </p>
+      <p style="margin-top:10px;">
+        <strong>Revision history:</strong> rev. 1 defined five separate event types (`tool_call`, `llm_request`, `embedding_request`, `reranker_request`, `indexing_run`) POSTed to a to-be-built central server. Rev. 2 replaced the transport with direct client-to-S3 uploads (self-hosted MinIO on PDC), removing the ingestion server entirely. Rev. 3 unified the data model itself: every MCP tool call and CLI command now emits exactly <strong>one</strong> `command_summary` event — describing the action taken, a rollup of every LLM/embedding/reranker call made underneath it, and an error summary — rather than several separate events per invocation. The store-and-forward buffering/upload mechanics from rev. 2 are unchanged; only what gets buffered changed. Rev. 4 added no architecture changes — it responded to review feedback by making the current Phase 1 authorization/trust assumptions explicit (previously only implicit in the S3/MinIO transport decision) and documented a proposed, out-of-scope Phase 2 direction for closing the gap. <strong>Rev. 5, following a second round of review, fixes a real gap that predated rev. 4</strong> — the object key's identity segment had always been the raw OS username regardless of `privacy_mode`, undermining the `hashed`/`anonymous` tiers — hardens the Phase 1 write-up (reader/reporting credential boundary, TLS, secret rotation, sensitivity framing), adds a "Relationship to provider API tokens" subsection, and re-ranks the Phase 2 options (per-developer static credentials as an incremental step, the presigned-URL broker as the longer-term target with broker-bound identity now a stated requirement). See the Authorization &amp; Trust Model section. <strong>Rev. 6 (this revision)</strong> answers a new requirement — visibility into vendor call volume and failure rates, broken down per vendor — by moving failure accounting from a flat, command-level `errors: {count, types}` block into a per-`(kind, provider, model)` breakdown (`fails`, `error_types`) alongside the existing `calls`/token rollup, with a narrow `internal_error_type` fallback for the rare failure not caused by any vendor call. See the Data Model and Architecture Detail sections.
+      </p>
+      <p style="margin-top:10px;">
+        This proposal defines a client-side, <strong>store-and-forward</strong> analytics pipeline: buffer usage events locally, periodically flush the buffer as a single, uniquely-named object directly to an S3 bucket, and clear the local buffer on successful upload. Cost-in-dollars conversion is explicitly out of scope — this ships only the ChunkHound-side instrumentation and upload logic.
+      </p>
+    </div>
+
+    <div class="section" id="decisions">
+      <h2>Key Design Decisions</h2>
+      <ul>
+        <li><strong>Unified event model</strong> <span class="badge revised">revised (rev. 3)</span> — one `command_summary` event per MCP tool call or bounded CLI command, replacing the five separate event types from rev. 1/2 (including the special-cased `indexing_run`, which is now just the `index` command using the same general mechanism). Rationale: the same "flood of events" problem that motivated the original indexing rollup applies to every command, not just indexing — generalizing the pattern avoids re-solving it per-command and gives a consistent event shape everywhere.</li>
+        <li><strong>Action description</strong> <span class="badge new">added</span> — each command/tool defines its own small set of summary fields (e.g. `search` → `query`; `code_research` → `question`; `fetchurl` → `url`; `index` → `mode` + `file_count` + `total_chunks`) rather than a generic dump of all arguments — keeps events meaningful and avoids leaking oversized/irrelevant argument values.</li>
+        <li><strong>Provider rollup</strong> <span class="badge revised">revised (rev. 6)</span> — LLM/embedding/reranker activity during a command is summarized as counts and token totals **broken down by provider + model** (not just a flat total), preserving the earlier cost-varies-by-model decision from rev. 1. As of rev. 6, `calls` counts every attempt (success + fail), not just successes.</li>
+        <li><strong>Per-vendor failure attribution</strong> <span class="badge revised">revised (rev. 6)</span> — rev. 3's command-level `errors: {count, types}` couldn't tell you *which* vendor call failed. Each `providers[kind]` entry now carries its own `fails` (subset of `calls`) and `error_types` (`{ExceptionTypeName: count}`) — type name only, never message text, same rationale as before. The old top-level `errors` block is removed; a single `internal_error_type` fallback (also type-name-only) covers the rare failure not caused by any vendor call. See Data Model and Architecture Detail.</li>
+        <li><strong>User identity &amp; privacy modes</strong> <span class="badge new">added</span> — OS username remains the default (<code>privacy_mode = "full"</code>, unchanged for existing adopters). Two additional configurable tiers were added for organizations strict about personal-data collection: <code>hashed</code> (salted one-way hash) and <code>anonymous</code> (<code>user</code> field present but <code>null</code>). See the Privacy section below.</li>
+        <li><strong>Systematic non-identifying fields</strong> <span class="badge new">added</span> — every event also carries <code>os</code> (<code>platform.system()</code>) and <code>chunkhound_version</code> (<code>chunkhound.__version__</code>), regardless of <code>privacy_mode</code> — not personally identifying, and they partially compensate for the cross-machine correlation lost in <code>hashed</code> mode.</li>
+        <li><strong>Data destination</strong> <span class="badge decision">decided (rev. 2)</span> — local JSONL buffer file → periodic/event-based flush → the entire buffer file is uploaded as one new, uniquely-named object directly to an S3-compatible bucket (self-hosted MinIO on PDC) → the local buffer is cleared only after a successful upload.</li>
+        <li><strong>Opt-in</strong> <span class="badge decision">decided</span> — off by default (`analytics.enabled = false`). Users/teams turn it on manually via config for now; ALGINF-5804 can push this org-wide later without another release.</li>
+        <li><strong>Flush cadence</strong> <span class="badge decision">decided</span> — hours-scale by default (not minutes), since per-developer usage is light. Default `flush_interval_seconds = 21600` (6h), with a size-based safety cap (`flush_batch_size = 500` lines), plus a best-effort flush on clean shutdown.</li>
+        <li><strong>Repository attribution</strong> <span class="badge decision">decided</span> — every event carries a `repository` field, resolved via `git remote get-url origin` (parsed to repo name), falling back to the directory basename.</li>
+        <li><strong>Object key scheme</strong> <span class="badge revised">revised (rev. 5)</span> — `analytics/&lt;repository&gt;/&lt;privacy_id&gt;/&lt;YYYY&gt;/&lt;MM&gt;/&lt;DD&gt;/&lt;iso8601-timestamp&gt;_&lt;uuid4&gt;.jsonl`. As decided in rev. 2, the key's identity segment was always the raw OS username, independent of `privacy_mode` (added in rev. 3) — so `hashed`/`anonymous` mode hid identity in the JSON payload but still leaked it via the S3 path to anyone with list/read access. `&lt;privacy_id&gt;` now reuses the exact value already computed for the payload's `user` field, so the two can never disagree. See the Authorization &amp; Trust Model section for the full rationale.</li>
+        <li><strong>Client S3 library &amp; credential</strong> <span class="badge decision">decided (rev. 2)</span> — `boto3` with a custom `endpoint_url` pointing at the MinIO instance; a single shared, write-only S3 credential distributed via environment variable, kept out of `.chunkhound.json`.</li>
+        <li><strong>Per-process buffer files + atomic rename-before-upload</strong> <span class="badge new">added</span> — a user running ChunkHound against several repositories in parallel has multiple independent OS processes, each with its own <code>AnalyticsRecorder</code>. Rather than synchronize concurrent access to one shared file (locking), each process owns a uniquely-named buffer file and never shares it. Flush now atomically renames the active file before reading/uploading it, closing a latent data-loss race in the original design — this was a real bug fix, not just a multi-process accommodation. See the Concurrency section below.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="diagrams">
+      <h2>Architecture &amp; Flow</h2>
+      <h3>Component architecture</h3>
+      <div class="mermaid">
+graph TB
+    subgraph ChunkHound Process
+        MCPHOOK["MCP: handle_tool_call()<br/>common.py:170"]
+        CLIHOOK["CLI: async_main() dispatch<br/>main.py:196-252"]
+        ACC["Command accumulator<br/>(contextvars.ContextVar)<br/>start_command / end_command"]
+        LLM["LLM provider call<br/>wrapped at construction<br/>llm_manager.py:63"]
+        EMB["Embedding / reranker call<br/>wrapped at construction<br/>embeddings.py:45"]
+        REPO["repository_id.py<br/>resolve_repository_name()"]
+        REC["AnalyticsRecorder<br/>record_event()"]
+        BUF[("Local buffer<br/>~/.config/chunkhound/analytics/usage.jsonl")]
+    end
+    S3[("S3-compatible bucket<br/>MinIO on PDC<br/>analytics/&lt;repo&gt;/&lt;privacy_id&gt;/.../*.jsonl")]
+
+    MCPHOOK -- "start_command / end_command" --> ACC
+    CLIHOOK -- "start_command / end_command<br/>(bounded commands only)" --> ACC
+    LLM -- "record_provider_call()" --> ACC
+    EMB -- "record_provider_call()" --> ACC
+    REPO -.-> MCPHOOK
+    REPO -.-> CLIHOOK
+    ACC -- "one command_summary event on end_command" --> REC
+    REC --> BUF
+    BUF -- "periodic / size-triggered flush:<br/>PutObject(unique key)" --> S3
+    S3 -- "success → delete local buffer file" --> BUF
+      </div>
+
+      <h3>Command flow (sequence)</h3>
+      <div class="mermaid">
+sequenceDiagram
+    participant U as User (search / index / etc.)
+    participant HOOK as Hook (handle_tool_call or CLI dispatch)
+    participant ACC as Command accumulator
+    participant PROV as LLM / embedding / reranker calls
+    participant AR as AnalyticsRecorder
+    participant FS as Local buffer (JSONL file)
+    participant S3 as S3-compatible bucket (MinIO)
+
+    U->>HOOK: invoke tool / run command
+    HOOK->>ACC: start_command(name, source, action_fields)
+    loop zero or more provider attempts during the command (each retry counts separately)
+        PROV->>ACC: record_provider_call(kind, provider, model, success, error?)
+    end
+    alt command raises AND no provider entry recorded a fail
+        HOOK->>ACC: record_internal_error(error)
+    end
+    alt command raises
+        HOOK->>ACC: end_command(success=false)
+    else command completes
+        HOOK->>ACC: end_command(success=true)
+    end
+    ACC->>AR: record_event(one command_summary)
+    AR->>FS: append JSON line (fire-and-forget, never raises)
+    loop every flush_interval_seconds OR buffer > flush_batch_size
+        AR->>S3: PutObject(key=analytics/repo/user/date/ts_uuid.jsonl, body=buffer contents)
+        alt upload succeeds
+            S3-->>AR: success
+            AR->>FS: delete local buffer file
+        else upload fails
+            S3-->>AR: error
+            AR->>FS: leave buffer file intact, retry next cycle
+        end
+    end
+      </div>
+    </div>
+
+    <div class="section" id="architecture">
+      <h2>Architecture Detail</h2>
+      <h3>New module: <code>chunkhound/core/analytics/recorder.py</code></h3>
+      <p>An <code>AnalyticsRecorder</code> that:</p>
+      <ul>
+        <li>Owns a buffer file unique to its own OS process (<code>~/.config/chunkhound/analytics/buffer-&lt;pid&gt;-&lt;process_start_ts&gt;.jsonl</code> — see Concurrency below), not one fixed shared path.</li>
+        <li>Exposes <code>record_event(event: dict)</code> — appends a JSON line, fire-and-forget, catches and logs (never raises, never prints to stdout per the MCP-stdio-must-stay-clean rule in <code>AGENTS.md</code>).</li>
+        <li>Runs a background flush loop: triggers on <code>flush_interval_seconds</code> elapsed OR buffered lines exceeding <code>flush_batch_size</code>, plus one attempt on shutdown. Atomically renames the active file, uploads the renamed file's contents as one object to S3 via <code>boto3</code>'s <code>put_object</code>, and deletes it on success; on failure, leaves it in place (retried next cycle without re-renaming).</li>
+        <li>Caps the buffer file size (e.g. 10MB) so a long-outage bucket can't fill a user's disk.</li>
+        <li>No-ops entirely (no file writes, no background thread) when <code>analytics.enabled</code> is false.</li>
+      </ul>
+
+      <h3>Command accumulator <span class="badge new">new in rev. 3</span></h3>
+      <p>A <code>contextvars.ContextVar[CommandAccumulator | None]</code> holds the "currently open command" — context-var-based (not a single global) so concurrent async MCP tool calls each get an isolated accumulator scoped to their own asyncio task, with no cross-contamination between simultaneous commands' tallies.</p>
+      <ul>
+        <li><code>start_command(command: str, source: "mcp" | "cli", action: dict) -&gt; None</code> — opens a new accumulator, records the start time, sets it as the current context-var value.</li>
+        <li><code>record_provider_call(kind: "llm" | "embedding" | "reranker", provider: str, model: str, success: bool, error: Exception | None = None, input_tokens=None, output_tokens=None) -&gt; None</code> <span class="badge revised">revised (rev. 6)</span> — looks up the current accumulator via the context var and updates its per-(kind, provider, model) tallies. Called <strong>once per application-visible attempt</strong> (every retry iteration in an app-level retry loop is its own call; a single LLM chokepoint invocation, whose SDK-internal retries are already resolved by the time it returns/raises, is also its own call — see the Instrumentation Placement table below). <code>calls</code> increments on every invocation regardless of <code>success</code>; <code>fails</code> increments only when <code>success=False</code>, alongside <code>error_types[type(error).__name__]</code> (<code>error</code> required when <code>success=False</code>). Token args are only meaningful on success. If no accumulator is open (shouldn't normally happen — every provider call is always triggered by some command), the call is silently dropped rather than raised.</li>
+        <li><code>record_internal_error(exc: Exception) -&gt; None</code> <span class="badge revised">replaces record_error (rev. 6)</span> — sets the current accumulator's <code>internal_error_type</code> to the exception's type name, without capturing message text. Only meaningful when no provider entry has recorded a fail; otherwise a no-op, since a vendor-caused failure already explains the command's outcome.</li>
+        <li><code>end_command(success: bool) -&gt; None</code> — finalizes the accumulator (duration = now − start), builds the single <code>command_summary</code> event from the tallies + action fields + per-provider fail/error breakdown, calls <code>record_event()</code>, then clears the context var. <code>internal_error_type</code> on the emitted event is <code>null</code> unless <code>success=False</code> and every <code>providers[*][*].fails == 0</code>.</li>
+      </ul>
+      <p style="margin-top:10px;">This generalizes and <strong>replaces</strong> rev. 1/2's special-cased <code>start_indexing_session()</code>/<code>end_indexing_session()</code> — the `index` CLI command now just calls <code>start_command("index", "cli", action={...})</code>/<code>end_command(...)</code> like every other command, and per-batch embedding calls during indexing feed the same generic <code>record_provider_call()</code> as everywhere else.</p>
+
+      <h3>Instrumentation placement per vendor <span class="badge new">added (rev. 6)</span></h3>
+      <p>There is no single repo-wide chokepoint all three vendor kinds funnel through — each provider class has its own narrow per-attempt call site, and retry visibility differs by vendor kind:</p>
+      <table>
+        <tr><th style="width:14%">Vendor</th><th style="width:43%">Chokepoint(s)</th><th>Retry visibility</th></tr>
+        <tr>
+          <td>Embedding</td>
+          <td><code>chunkhound/providers/embeddings/openai_provider.py: _embed_batch_internal()</code>; <code>chunkhound/providers/embeddings/voyageai_provider.py: _embed_single_batch_locked()</code></td>
+          <td><strong>App-level.</strong> Each provider wraps its call in its own <code>for attempt in range(self._retry_attempts)</code> loop with rate-limit-aware backoff. <code>record_provider_call</code> fires once per loop iteration — every attempt, success or fail, is individually visible.</td>
+        </tr>
+        <tr>
+          <td>Reranker</td>
+          <td><code>openai_provider.py: _rerank_single_batch()</code>; <code>voyageai_provider.py: _rerank_via_sdk()</code> (SDK path) / <code>_rerank_http_batch()</code> (HTTP path, no retry at this layer — retries happen one level up via batch-splitting, which does not retry, only splits)</td>
+          <td><strong>App-level</strong> for the SDK path, matching embedding. The HTTP path's single-attempt chokepoint still calls <code>record_provider_call</code> per attempt; batch-splitting above it is a different concern (chunking work, not retrying a failed attempt) and isn't itself an instrumentation point.</td>
+        </tr>
+        <tr>
+          <td>LLM</td>
+          <td><code>chunkhound/providers/llm/anthropic_llm_provider.py: _create_message()</code>; <code>chunkhound/providers/llm/openai_compatible_provider.py</code>'s <code>chat.completions.create()</code> / <code>responses.create()</code> call sites</td>
+          <td><strong>SDK-internal.</strong> <code>max_retries</code> is passed directly into the SDK client constructor (<code>AsyncAnthropic(max_retries=...)</code>, <code>AsyncOpenAI(max_retries=...)</code>) — individual HTTP retry attempts happen inside the SDK/httpx transport and are invisible to application code. One <code>record_provider_call</code> fires per chokepoint invocation, reflecting an already-resolved result. This is coarser than embedding/reranker <strong>by design</strong> — not a gap this rev. closes. A <code>calls</code> value like <code>4</code> for an LLM entry (see Data Model) reflects the app calling the chokepoint multiple times (e.g. a multi-hop research loop), not raw HTTP attempts.</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="section" id="concurrency">
+      <h2>Concurrency &amp; Collision Prevention</h2>
+      <p>A developer running ChunkHound against several repositories in parallel (e.g. separate MCP servers per IDE window, or a CLI command alongside a running MCP server) means multiple independent OS processes, each with its own <code>AnalyticsRecorder</code> instance, on the same machine at the same time.</p>
+      <h3>Local buffer file: per-process, uniquely named</h3>
+      <p>Each recorder owns exactly one buffer file for its process lifetime: <code>~/.config/chunkhound/analytics/buffer-&lt;pid&gt;-&lt;process_start_ts&gt;.jsonl</code> (PID plus the process's own start timestamp, since PIDs get reused across process restarts). No two processes ever write to the same file — this avoids cross-process write collisions/corruption structurally, rather than introducing file-locking primitives to serialize access to one shared file.</p>
+      <h3>Within a process: atomic rename before upload, not read-then-delete</h3>
+      <p>On a flush trigger:</p>
+      <ol>
+        <li><code>os.rename(active_path, rotated_path)</code> — atomic on both POSIX and Windows (same filesystem), a single indivisible operation. Any <code>record_event()</code> call happening concurrently (from concurrent async MCP tool calls in the same process) either lands in the file <em>before</em> the rename (included in this flush) or starts a fresh new active file <em>after</em> the rename (included in the next flush) — never lost, never interleaved with the upload read.</li>
+        <li>Upload the rotated file's contents to S3 under a fresh unique key.</li>
+        <li>On success, delete the rotated file. On failure, leave the rotated file in place and retry the <em>same</em> rotated file next cycle — do not re-rename an already-rotated file.</li>
+      </ol>
+      <p style="margin-top:10px;">This closes a real gap in the original design: a naive "read the active file, upload it, then delete/truncate it" approach has a race window where an event appended between the read and the delete is silently lost. Rename-first eliminates that window structurally — this was latent even in single-process use (concurrent async tool calls), not only a consequence of adding multi-process support.</p>
+      <h3>S3-side collision: already prevented by the object key design</h3>
+      <p>The key already includes a UUID4 (<code>analytics/&lt;repository&gt;/&lt;privacy_id&gt;/&lt;YYYY&gt;/&lt;MM&gt;/&lt;DD&gt;/&lt;iso8601-timestamp&gt;_&lt;uuid4&gt;.jsonl</code>), so even if two processes flush at the exact same instant, their object keys are guaranteed distinct — no possibility of one process's upload overwriting another's.</p>
+      <h3>Crash recovery: orphan sweep</h3>
+      <p>If a process is killed before it can flush (e.g. an IDE force-quit), its buffer file is orphaned — left on disk, never uploaded. Every recorder's flush loop, in addition to handling its own file, also globs the buffer directory for <em>other</em> files matching the naming pattern whose modification time is older than an idle threshold (<code>2 × flush_interval_seconds</code>) — a file untouched that long almost certainly belongs to a process no longer running — and attempts the same rename-upload-delete sequence on it. Because rename is atomic, if two still-live processes' sweeps race on the same stale file, only one succeeds; the other gets a harmless <code>FileNotFoundError</code> on its rename attempt and moves on — no corruption, no duplicate work beyond a no-op.</p>
+      <p style="margin-top:10px;">This is entirely a local-disk implementation detail — every process's files still land in the same S3 bucket under the same <code>analytics/&lt;repository&gt;/&lt;privacy_id&gt;/...</code> key structure, so the intended aggregate cross-repo, cross-process picture at the reporting layer is unaffected.</p>
+    </div>
+
+    <div class="section" id="privacy">
+      <h2>Privacy</h2>
+      <p>Some organizations are strict about collecting any personally-identifying data at all, even internally. <code>analytics.privacy_mode</code> (new config field, default <code>"full"</code> — existing behavior unchanged) offers three tiers, all producing the same event shape otherwise:</p>
+      <table>
+        <tr><th>Mode</th><th><code>user</code> field behavior</th></tr>
+        <tr><td><code>full</code> (default)</td><td>OS username as-is, exactly as originally designed.</td></tr>
+        <tr><td><code>hashed</code></td><td><code>user</code> = <code>sha256(local_salt + os_username)</code>.</td></tr>
+        <tr><td><code>anonymous</code></td><td><code>user</code> field present but set to <code>null</code> — no identity at all; repository/command/provider-level visibility remains.</td></tr>
+      </table>
+      <h3><code>privacy_mode</code> also governs the object key <span class="badge revised">revised (rev. 5)</span></h3>
+      <p>Prior to rev. 5, <code>privacy_mode</code> only affected the JSON payload's <code>user</code> field — the S3 object key's identity segment (see Data Model) was always the raw OS username, regardless of mode. That meant <code>hashed</code>/<code>anonymous</code> mode hid identity in the event body while still leaking it via the bucket path to anyone with list/read access on the bucket (see the Authorization &amp; Trust Model section's Reader/Reporting Credential note for why that's a real boundary, not a hypothetical one). This is now fixed: the key's <code>&lt;privacy_id&gt;</code> segment is computed once and reused for both the payload's <code>user</code> field and the key path.</p>
+      <table>
+        <tr><th>Mode</th><th>Object key <code>&lt;privacy_id&gt;</code> segment</th></tr>
+        <tr><td><code>full</code></td><td>OS username, same as the payload's <code>user</code> field.</td></tr>
+        <tr><td><code>hashed</code></td><td>The identical <code>sha256(local_salt + os_username)</code> value used in the payload — computed once, used in both places.</td></tr>
+        <tr><td><code>anonymous</code></td><td>A fixed literal segment, <code>anonymous</code>, shared by every anonymous-mode install. S3 keys can't have a null path component, and a per-install random ID would just reintroduce pseudonymous tracking under a different name — collapsing all anonymous-mode uploads under one shared prefix is the correct analogue to <code>user: null</code>.</td></tr>
+      </table>
+      <h3>Salt design for <code>hashed</code> mode</h3>
+      <p>The salt is generated once per ChunkHound install (<code>secrets.token_hex(16)</code>), persisted locally at <code>~/.config/chunkhound/analytics/salt</code>, and <strong>never uploaded, logged, or transmitted anywhere</strong>. This was a deliberate choice over a single org-wide shared salt: a shared salt would need to be distributed to every client (like the S3 credential), and anyone who obtained it could precompute a rainbow table against a directory of company usernames, fully reversing every hash in the dataset — defeating the entire purpose. A per-install random salt makes the hash irreversible in principle, since the only copy of it never leaves the machine that generated it.</p>
+      <p style="margin-top:10px;"><strong>Trade-off, stated explicitly:</strong> because the salt is per-install (not shared), the same person using two different machines (e.g. laptop + VDI) gets two different pseudonymous IDs in <code>hashed</code> mode — there is no way to correlate one individual across machines. This is intentional: it's the cost of making the hash genuinely irreversible rather than merely obfuscated. Within a single install, the hash is stable across process restarts (the salt file persists), so trend-tracking for "this install's" usage over time still works.</p>
+      <p style="margin-top:10px;"><code>action</code> fields (query text, URLs, etc.) are <strong>unaffected</strong> by <code>privacy_mode</code> in every tier — this feature's value is understanding usage patterns and cost, which needs action content; only identity is configurable.</p>
+      <h3>Compensating systematic fields</h3>
+      <p><code>os</code> (<code>platform.system()</code>, e.g. <code>"Linux"</code>/<code>"Darwin"</code>/<code>"Windows"</code>) and <code>chunkhound_version</code> (<code>chunkhound.__version__</code>, the existing hatch-vcs-derived version string already exposed via <code>chunkhound/__init__.py</code>) are added to every event regardless of <code>privacy_mode</code>. Neither is personally identifying — both are shared across potentially thousands of installs — but they give useful aggregate dimensions (OS distribution, version-adoption curves, version-correlated error rates) that remain meaningful even when <code>user</code> is <code>null</code>.</p>
+    </div>
+
+    <div class="section" id="hooks">
+      <h2>Hook Points (MCP + CLI)</h2>
+      <table>
+        <tr><th>Transport</th><th>Hook point</th><th>Notes</th></tr>
+        <tr>
+          <td>MCP tool calls</td>
+          <td><code>handle_tool_call()</code><br><code>chunkhound/mcp_server/common.py:170</code></td>
+          <td>Single transport-agnostic chokepoint used by both stdio and HTTP (registered via <code>handle_all_tools</code> in <code>chunkhound/mcp_server/base.py:1361</code>). Wraps every tool call (<code>search</code>, <code>code_research</code>, <code>websearch</code>, <code>fetchurl</code>, <code>daemon_status</code>) with <code>start_command</code>/<code>end_command</code>.</td>
+        </tr>
+        <tr>
+          <td>CLI commands</td>
+          <td><code>async_main()</code> dispatch<br><code>chunkhound/api/cli/main.py:196-252</code></td>
+          <td><span class="badge new">new in rev. 3</span> Single <code>try</code>/if-elif dispatch block already wraps every subcommand — the natural place to add <code>start_command</code> before dispatch and <code>end_command</code> in a <code>finally</code>. Applied to bounded, single-shot commands: <code>search</code>, <code>research</code>, <code>websearch</code>, <code>fetchurl</code>, <code>code_mapper</code>, <code>autodoc</code>, <code>calibrate</code>, and the index-triggering path.</td>
+        </tr>
+        <tr>
+          <td>LLM calls</td>
+          <td><code>LLMManager._create_provider()</code><br><code>chunkhound/llm_manager.py:63</code></td>
+          <td>Wrap the returned provider, intercepting <code>.complete()</code>/<code>.complete_structured()</code>/<code>.batch_complete()</code> to call <code>record_provider_call("llm", ...)</code> instead of emitting its own event.</td>
+        </tr>
+        <tr>
+          <td>Embedding + reranker calls</td>
+          <td><code>EmbeddingManager.register_provider()</code><br><code>chunkhound/embeddings.py:45</code></td>
+          <td>Same wrap pattern, intercepting <code>.embed()</code>/<code>.rerank()</code> to call <code>record_provider_call("embedding"|"reranker", ...)</code>.</td>
+        </tr>
+      </table>
+      <p style="margin-top:10px;"><strong>Explicitly excluded from the CLI hook:</strong> <code>mcp</code> (starts a long-running MCP server — its internal tool calls already get individual <code>command_summary</code> events via the MCP-level hook; wrapping the outer server process itself in one summary would be meaningless, potentially spanning hours or days) and any long-running watch/daemon mode. This mirrors the rev. 1 decision to leave the real-time file-watcher out of the indexing rollup, generalized to the new unified model.</p>
+
+      <h3>Repository resolution</h3>
+      <p>Shared helper <code>chunkhound/core/analytics/repository_id.py</code>: <code>resolve_repository_name(directory: Path) -&gt; str</code> runs <code>git remote get-url origin</code> (or the first configured remote) and parses the repo name; falls back to <code>directory.name</code> on any failure. Never raises. Resolved once at MCP server startup (cached for the process lifetime) or once per CLI invocation, and attached to every <code>command_summary</code> event.</p>
+    </div>
+
+    <div class="section" id="data-model">
+      <h2>Data Model</h2>
+      <p><span class="badge revised">revised (rev. 3)</span> JSONL, one <code>command_summary</code> event object per line — replaces all five event types from rev. 1/2:</p>
+      <p style="margin-top:10px;"><strong><code>providers[&lt;kind&gt;]</code> entry <span class="badge revised">revised (rev. 6)</span>:</strong> <code>{provider, model, calls, fails, error_types, input_tokens, output_tokens}</code>. <code>calls</code> is now <strong>total attempts, success + fail</strong> (previously success-only) — consistent with how retries already inflated <code>calls</code> in the examples below. <code>fails</code> is the subset of <code>calls</code> that raised. <code>error_types</code> is <code>{ExceptionTypeName: count}</code>, scoped to this <code>(kind, provider, model)</code> group — same "type name only, no message text" privacy rule as before. The command-level <code>errors: {count, types}</code> block from rev. 3 is <strong>removed</strong> — a command-level failure total can always be derived by summing <code>fails</code> across every <code>providers[*][*]</code> entry. In its place, one narrow fallback field, <strong><code>internal_error_type</code></strong> (<code>string | null</code>, command level): set only when <code>success: false</code> and no <code>providers[*][*]</code> entry recorded a fail — i.e. the failure wasn't caused by any vendor call. <code>null</code> in every other case. Exception type name only, never message text.</p>
+      <pre><code>// MCP tool call: search (privacy_mode = "full", the default) — all vendor calls succeeded
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "search", "source": "mcp", "duration_ms": 842, "success": true,
+ "action": {"query": "explain indexing"},
+ "providers": {
+   "llm":       [{"provider": "anthropic", "model": "claude-...", "calls": 1, "fails": 0, "error_types": {}, "input_tokens": 900, "output_tokens": 210}],
+   "embedding": [{"provider": "voyageai", "model": "voyage-3", "calls": 1, "fails": 0, "error_types": {}, "input_tokens": 32}],
+   "reranker":  [{"provider": "voyageai", "model": "rerank-2", "calls": 1, "fails": 0, "error_types": {}}]
+ },
+ "internal_error_type": null}
+
+// Same event with privacy_mode = "hashed"
+{"...": "...", "user": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "...": "..."}
+
+// Same event with privacy_mode = "anonymous"
+{"...": "...", "user": null, "...": "..."}
+
+// CLI command: index — one embedding batch attempt failed and was retried, then succeeded
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "index", "source": "cli", "duration_ms": 612000, "success": true,
+ "action": {"mode": "initial", "file_count": 8500, "total_chunks": 340000},
+ "providers": {
+   "embedding": [{"provider": "voyageai", "model": "voyage-3", "calls": 1135, "fails": 1,
+                   "error_types": {"RateLimitError": 1}, "input_tokens": 41200000}]
+ },
+ "internal_error_type": null}
+
+// A command with a transient LLM failure that was retried (app-visible chokepoint invocations),
+// and one that ultimately failed
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Darwin", "chunkhound_version": "5.2.2",
+ "command": "code_research", "source": "mcp", "duration_ms": 15300, "success": false,
+ "action": {"question": "how does the compaction protocol work"},
+ "providers": {
+   "llm": [{"provider": "openai", "model": "gpt-4o", "calls": 4, "fails": 2,
+            "error_types": {"TimeoutError": 1, "ValueError": 1},
+            "input_tokens": 6200, "output_tokens": 1800}]
+ },
+ "internal_error_type": null}
+
+// A command that failed for a reason unrelated to any vendor call
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "search", "source": "cli", "duration_ms": 12, "success": false,
+ "action": {"query": "explain indexing"},
+ "providers": {},
+ "internal_error_type": "KeyError"}
+
+// search, git-history-scoped (--last-n / --commit-range / --commit-hash)
+{"type": "command_summary", "user": "jsmith", "ts": "&lt;iso8601&gt;", "repository": "chunkhound",
+ "os": "Linux", "chunkhound_version": "5.2.2",
+ "command": "search", "source": "cli", "duration_ms": 610, "success": true,
+ "action": {"query": "explain indexing", "last_n_commits": 10},
+ "providers": {"embedding": [{"provider": "voyageai", "model": "voyage-3", "calls": 1, "fails": 0, "error_types": {}, "input_tokens": 14}]},
+ "internal_error_type": null}</code></pre>
+      <p style="margin-top:10px;"><strong>Object key format <span class="badge revised">revised (rev. 5)</span>:</strong> <code>analytics/&lt;repository&gt;/&lt;privacy_id&gt;/&lt;YYYY&gt;/&lt;MM&gt;/&lt;DD&gt;/&lt;iso8601-timestamp&gt;_&lt;uuid4&gt;.jsonl</code>. <code>&lt;privacy_id&gt;</code> is derived the same way as the payload's <code>user</code> field shown in the three examples above (OS username for <code>full</code>, the same salted hash for <code>hashed</code>, a fixed shared literal <code>anonymous</code> for <code>anonymous</code> mode — see Privacy below) — key and payload identity can never disagree. One file per flush; a file may contain multiple <code>command_summary</code> lines.</p>
+
+      <h3>Per-command <code>action</code> fields</h3>
+      <table>
+        <tr><th>Command</th><th>Action fields</th></tr>
+        <tr><td><code>search</code></td><td><code>query</code>, plus <strong>one of</strong> <code>commit_range</code> / <code>commit_hash</code> / <code>last_n_commits</code> when the search is git-history-scoped (<code>chunkhound search --commit-range</code>/<code>--commit-hash</code>/<code>--last-n</code>, mutually exclusive per <code>chunkhound/api/cli/commands/search.py:84-97</code>) — absent for a normal (non-git) search</td></tr>
+        <tr><td><code>code_research</code> / <code>research</code></td><td><code>question</code></td></tr>
+        <tr><td><code>websearch</code></td><td><code>query</code></td></tr>
+        <tr><td><code>fetchurl</code></td><td><code>url</code></td></tr>
+        <tr><td><code>daemon_status</code></td><td><em>(none — no meaningful action parameters)</em></td></tr>
+        <tr><td><code>index</code></td><td><code>mode</code> (<code>initial</code>/<code>reindex</code>), <code>file_count</code>, <code>total_chunks</code></td></tr>
+      </table>
+    </div>
+
+    <div class="section" id="configuration">
+      <h2>Configuration</h2>
+      <p>New <code>chunkhound/core/config/analytics_config.py</code>, following the <code>DatabaseConfig</code> template (<code>chunkhound/core/config/database_config.py:17-109</code>) — unchanged from rev. 2:</p>
+      <pre><code>class AnalyticsConfig(BaseModel):
+    enabled: bool = Field(default=False, description="Opt-in: enable usage analytics reporting")
+    privacy_mode: Literal["full", "hashed", "anonymous"] = Field(default="full", description="How to represent user identity: full (OS username), hashed (salted one-way hash, local salt), or anonymous (omitted)")
+    s3_endpoint_url: str | None = Field(default=None, description="MinIO/S3-compatible endpoint URL to upload usage batches to")
+    s3_bucket: str | None = Field(default=None, description="Target bucket name for usage batch objects")
+    flush_interval_seconds: int = Field(default=21600, description="Max time between flush attempts (default: 6 hours)")
+    flush_batch_size: int = Field(default=500, description="Safety cap: early flush if buffered lines exceed this")</code></pre>
+      <p>Wired into <code>Config</code> (<code>chunkhound/core/config/config.py:~55</code>) as <code>analytics: AnalyticsConfig</code>. The S3 credential itself is read via <code>boto3</code>'s standard environment-variable resolution (<code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code>), never stored in <code>.chunkhound.json</code>. Adopters must place that credential and endpoint behind their org's normal private-network/IAM controls — see Authorization &amp; Trust Model.</p>
+    </div>
+
+    <div class="section" id="non-goals">
+      <h2>Non-Goals</h2>
+      <ul>
+        <li><span class="badge nongoal">out of scope</span> No dollar-cost conversion — raw counts/tokens/model/provider only.</li>
+        <li><span class="badge nongoal">out of scope</span> No central ingestion server — direct S3 upload, nothing to build or operate on the receiving side.</li>
+        <li><span class="badge nongoal">out of scope</span> No per-client identity for the HTTP MCP transport.</li>
+        <li><span class="badge nongoal">out of scope</span> No auto-provisioning of <code>analytics.enabled</code>/S3 config org-wide — that's ALGINF-5804's job once it exists.</li>
+        <li><span class="badge nongoal">out of scope</span> No command-summary coverage for long-running commands (<code>mcp</code> server process, watch/daemon mode) — their internal work is covered by the MCP-level per-tool-call hook instead, or is out of scope entirely for the file-watcher case.</li>
+        <li><span class="badge nongoal">out of scope</span> No error message text — type/count only, to avoid leaking query/data content via exception messages.</li>
+        <li><span class="badge nongoal">out of scope</span> No per-user or per-repository S3 credential scoping in Phase 1 — one shared, write-only credential, with authorization left to network isolation + bucket IAM (see Authorization &amp; Trust Model). Provider-side per-user API tokens remain the recommended way to attribute embedding/LLM spend when that is the primary goal.</li>
+        <li><span class="badge nongoal">out of scope</span> No cross-machine correlation in <code>hashed</code> mode — a deliberate trade-off for making the salt genuinely irreversible, not a gap to fix later. An org-wide shared salt was considered and explicitly rejected.</li>
+        <li><span class="badge nongoal">out of scope</span> No redaction/omission of <code>action</code> content in any privacy mode — only <code>user</code> is configurable.</li>
+        <li><span class="badge nongoal">out of scope</span> No cross-process file locking — deliberately avoided in favor of per-process buffer files, which sidestep shared-file contention structurally instead of serializing access to it.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="authorization">
+      <h2>Authorization &amp; Trust Model <span class="badge new">added (rev. 4)</span> <span class="badge revised">revised (rev. 5)</span></h2>
+      <h3>Current trust boundary (Phase 1)</h3>
+      <p>
+        Write access to the analytics bucket is gated by exactly two things, both already implied by the transport decision in this document, made explicit here per review feedback:
+      </p>
+      <ol>
+        <li><strong>Network-layer trust.</strong> The MinIO endpoint is reachable only from inside the corporate network — either because a client is on VPN/private network, or, where that isn't available, because the client's source IP is on an allowlist enforced in front of MinIO (load balancer / firewall rule). No authorization decision is made by ChunkHound or MinIO based on which developer, machine, or repository is making the request — only whether this network path is allowed to reach the endpoint at all. The endpoint <strong>must require TLS/HTTPS</strong> — network-layer trust alone doesn't protect the shared credential in transit, only plain-HTTP exposure would turn any on-path observer into a credential thief.</li>
+        <li><strong>A single shared write-only credential.</strong> Every ChunkHound install is configured with the same <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code> pair, granted <code>PutObject</code> on the <code>analytics/*</code> prefix and nothing else — no <code>GetObject</code>, <code>ListBucket</code>, or <code>DeleteObject</code>. Distributed as plaintext environment variables; never persisted in <code>.chunkhound.json</code>.</li>
+      </ol>
+      <p style="margin-top:10px;">
+        Critically, the <code>&lt;repository&gt;</code> and <code>&lt;privacy_id&gt;</code> segments of the object key are <strong>client-asserted, not authenticated</strong> — nothing in the credential or the bucket policy ties a given caller to a specific <code>&lt;repository&gt;</code>/<code>&lt;privacy_id&gt;</code> value. The key scheme is a convenient partitioning for downstream consumers, not an access-control boundary.
+      </p>
+      <h3>What this credential can and cannot do</h3>
+      <table>
+        <tr><th>Capability</th><th>Granted?</th></tr>
+        <tr><td>Write a new object under any <code>analytics/&lt;repository&gt;/&lt;privacy_id&gt;/...</code> prefix</td><td>Yes — for every repository and every user, not just the caller's own</td></tr>
+        <tr><td>Overwrite an existing analytics object</td><td>Not via key guessing — the <code>uuid4</code> suffix makes key collisions effectively impossible. This is <strong>collision-resistance, not an IAM guarantee</strong>: enable bucket versioning and, if MinIO's object-lock/<code>If-None-Match</code> support is available, use it as a defense-in-depth backstop rather than relying on the key format alone.</td></tr>
+        <tr><td>Read any analytics object (exfiltrate another user's/repo's usage data)</td><td>No — credential is write-only</td></tr>
+        <tr><td>List bucket contents / enumerate other users' uploads</td><td>No — no <code>ListBucket</code> grant</td></tr>
+        <tr><td>Delete any analytics object</td><td>No — no <code>DeleteObject</code> grant</td></tr>
+      </table>
+      <p style="margin-top:10px;">
+        <strong>Implementation note:</strong> Phase 1 should pin the client to a single <code>PutObject</code> call per flush — no <code>ListBucket</code>, no multipart upload (<code>UploadPart</code>/<code>AbortMultipartUpload</code>). Some S3 SDKs default to multipart above a size threshold or probe bucket state before writing; test the chosen client against the actual write-only IAM policy so "write-only" doesn't get silently widened by a library default. A size/quota cap on the bucket (or per-prefix) is also recommended, bounding the volumetric-abuse case below regardless of client behavior.
+      </p>
+      <h3>Blast radius of a single compromised credential</h3>
+      <p>
+        Because the credential is shared across every client and not scoped per repository or per user, <strong>compromise of one copy is equivalent to compromising all of them</strong>. If the credential leaks (a captured env var from a compromised laptop, a misconfigured CI log, a shared build image) or the endpoint is reached from an allowlisted IP without a legitimate developer's machine (a compromised jump host, shared NAT egress, another tenant on the same allowlisted range), an attacker can:
+      </p>
+      <ul>
+        <li><strong>Inject fabricated analytics events attributed to any user or repository</strong> — since <code>&lt;repository&gt;</code>/<code>&lt;privacy_id&gt;</code> are self-reported key-path segments, downstream tooling will attribute forged events to whoever the attacker names.</li>
+        <li><strong>Perform volumetric abuse</strong> — flood the bucket with objects under arbitrary prefixes, driving up storage cost and stressing whatever pipeline consumes these objects.</li>
+      </ul>
+      <p style="margin-top:10px;">
+        The attacker <strong>cannot</strong> read, enumerate, or delete any analytics data — the write-only grant meaningfully limits the damage to injection and volumetric abuse, not exfiltration or destruction. That said, the blast radius for the write-side risk is the <strong>entire org's analytics bucket across all repositories and all users</strong>, not just the compromised client's own data, because there is no per-caller scoping today. Note that "write-only" bounds the damage from a <em>leaked client credential</em> — it says nothing about who can <em>read</em> the bucket; see Reader/Reporting Credential below for that separate boundary.
+      </p>
+      <h3>Uploader identity is weak; bucket contents are not low-sensitivity <span class="badge revised">revised (rev. 5)</span></h3>
+      <p>
+        <code>action</code> fields (query text, questions, URLs — see Privacy) are present in every event regardless of <code>privacy_mode</code>, because understanding usage patterns is this feature's whole purpose. That means the bucket holds real search/question content, not just counters — it should be treated like telemetry containing query text, not like anonymous click counts. The accepted Phase 1 tradeoff is specifically about <strong>who is authorized to write and under what claimed identity</strong> being weakly enforced; it is not a claim that the data itself is low-value to protect.
+      </p>
+      <h3>Reader/Reporting credential — the actual confidentiality boundary <span class="badge new">added (rev. 5)</span></h3>
+      <p>
+        The client write credential can't read, list, or delete — but something has to read the bucket to produce any reporting/dashboards, and <strong>that</strong> reader role, not the write credential, is where query-content exfiltration risk actually lives. Compromise of a reporting credential is strictly worse than compromise of the write-only client credential: it exposes the accumulated query/question/URL history of the whole org, not just the ability to inject or flood. The reader role must be least-privilege (read/list only, no write/delete), issued separately from the client write credential, and never distributed to developer machines — it belongs only to the reporting/ETL service that needs it.
+      </p>
+      <h3>Shared-secret distribution &amp; rotation <span class="badge new">added (rev. 5)</span></h3>
+      <p>
+        The write credential should be distributed through the org's normal secret-manager channel (not, e.g., pasted into a wiki page or committed anywhere), with rotation supporting a brief dual-key overlap window so in-flight buffers on developer machines don't fail mid-rotation. CI is deliberately not a default holder of this credential — the CI-log leak path is already called out above as a blast-radius scenario, so unless CI-originated analytics events are an intentional source, the credential should be scoped to developer/install environments only.
+      </p>
+      <h3>Why this is an accepted Phase 1 tradeoff</h3>
+      <p>
+        This matches the design's existing non-goal: <em>"No per-user or per-repository S3 credential scoping in Phase 1 — one shared write-only credential for all clients."</em> That decision is reaffirmed here, not revisited — standing up per-user credential issuance is nontrivial net-new infrastructure (see Phase 2 direction below), and Phase 1's threat model accepts network-layer trust plus a write-only, un-scoped credential as sufficient given the write-only limitation, provided the reader/reporting boundary above is respected. This section exists to make that assumption explicit and reviewable, not to change the Phase 1 plan.
+      </p>
+
+      <h3>Relationship to provider API tokens <span class="badge new">added (rev. 5)</span></h3>
+      <p>
+        This section has been about one question: who can write to the analytics bucket, and as whom. That's a different question from <strong>spend attribution</strong> — who spent how much on embedding/LLM calls — which many orgs already solve independently via per-developer provider API tokens (e.g. individually-issued Voyage AI or LLM-gateway keys with their own rotation and billing attribution). That path is complementary to CH analytics and often sufficient on its own for cost tracing.
+      </p>
+      <p style="margin-top:10px;">
+        ChunkHound analytics targets a different question: <strong>what commands ran, against which repositories, with what outcomes</strong>, plus a rolled-up view of provider usage inside CH — not a source of billing truth. Concretely, the <code>providers[].input_tokens</code>/<code>output_tokens</code> counts in a <code>command_summary</code> event are self-reported by the client and <strong>must not</strong> be treated as a billing source of truth — the provider's own per-key usage/billing remains the cost ledger. Orgs with strong per-developer provider keys already may reasonably: rely on provider billing for cost identity and use CH analytics mainly for usage/product insight (<code>privacy_mode = anonymous</code> or <code>hashed</code> is fine for that purpose), or still enable CH analytics with the shared S3 write path, accepting that upload authorization is network/IAM-based while provider spend remains separately token-attributable. Good provider token creation/rotation policy reduces the pressure on per-user analytics-upload credentials; it does not by itself authorize or authenticate writes to the analytics bucket — that's what the Phase 2 direction below is for.
+      </p>
+
+      <h3>Phase 2 direction: per-user scoped credentials <span class="badge new">proposal, not committed</span></h3>
+      <p>
+        The reviewer's core point — that today's model reduces to "inside the network perimeter (or on an allowlisted IP) plus the one shared secret grants full write access to everything" — can be made redundant by issuing each client credentials that are both <strong>scoped</strong> to its own <code>analytics/&lt;repository&gt;/&lt;privacy_id&gt;/</code> prefix and <strong>short-lived</strong>, with issuance traced centrally — analogous to how per-developer provider tokens let an org trace usage back to an individual. Evaluated below against <strong>self-hosted MinIO</strong> specifically, since some AWS-only mechanisms don't apply here.
+      </p>
+      <table>
+        <tr><th>Option</th><th>Durable secret on client?</th><th>New infra required</th><th>Blast radius of one leak</th><th>Revocation</th></tr>
+        <tr><td><strong>C — Per-developer static IAM users</strong> <span class="badge">Phase 1.5</span></td><td>Yes, but prefix-scoped</td><td>IAM provisioning/rotation automation (moderate)</td><td>Single prefix, unbounded until manually rotated</td><td>Manual/scripted, no automatic expiry</td></tr>
+        <tr><td><strong>B — Presigned URL broker</strong> <span class="badge">North star</span></td><td><strong>No — client never holds any S3 credential</strong></td><td>Small internal issuance service + its own client-auth mechanism (moderate)</td><td>Single object, minutes-bounded</td><td>Automatic on URL expiry; broker can also deny at issuance time</td></tr>
+        <tr><td><strong>A — MinIO STS / AssumeRole</strong></td><td>No (short-lived derived creds)</td><td>OIDC IdP or LDAP integration + policy templating (heaviest)</td><td>Single prefix, TTL-bounded</td><td>Automatic on TTL expiry</td></tr>
+      </table>
+      <p style="margin-top:10px;">
+        <strong>Option C, reframed as an incremental "Phase 1.5" step</strong> — provision one MinIO user per developer with a prefix-scoped policy (<code>mc admin user</code>/<code>mc admin policy</code>). This is literally the shape of the per-developer provider-token pattern the original review compared this to, and it's the right recommendation for <strong>orgs that already run per-developer credential issuance</strong> for other systems: no new ChunkHound service required, just IAM automation the org may already operate. It still leaves a durable secret per developer (narrower blast radius than today, not eliminated) and doesn't reduce reliance on network-layer trust for the upload itself, so it's a real improvement, not an end state.
+      </p>
+      <p style="margin-top:10px;">
+        <strong>Option B, as the long-term north star</strong> — a small internal, stateless issuance endpoint authenticates the calling client, generates a presigned PUT URL scoped to exactly one object key with a short expiry, and returns it over HTTPS; the client performs a single HTTP PUT with no AWS SDK and no S3 credential of any kind. This is the only option where the client never holds any durable or short-lived bucket credential at all. It comes with hard requirements the rev. 4 draft left implicit:
+      </p>
+      <ul>
+        <li><strong>Identity is broker-derived, never client-supplied.</strong> The broker must set <code>&lt;privacy_id&gt;</code> from its own authentication of the caller — a client that authenticates as itself cannot request a presigned URL for someone else's prefix. <code>&lt;repository&gt;</code> can remain client-asserted (spoofing a repo name is much lower-stakes than spoofing identity). Without this, Option B reproduces Phase 1's exact spoofing gap behind a narrower secret — it would not actually be an improvement.</li>
+        <li><strong>Presign at flush time, not at process start.</strong> TTL should be minutes-scale, covering one buffer flush — not issued once and held for the whole process lifetime (flush interval defaults to 6 hours).</li>
+        <li><strong>Broker downtime degrades gracefully.</strong> The client already buffers locally before flushing, so a broker outage means a delayed upload, not lost data or a broken command — this should be stated explicitly so "we added a server" isn't read as a new availability risk to the actual product.</li>
+        <li><strong>The broker's own client-authentication mechanism is undesigned.</strong> "A lightweight per-developer/install token" is not yet a real answer — it needs its own issuance, rotation, and offboarding story (an IdP, MDM-issued cert, or the same distribution flow as provider tokens) before Option B actually delivers the traceability the reviewer described; otherwise this is Option C moved one hop rather than a genuine improvement.</li>
+        <li><strong>The broker is a thin signing service, not an ingestion pipeline.</strong> It authorizes and signs one PUT URL per request; it does not receive, store, or process event data. This doesn't reverse the existing "no central ingestion server" non-goal from rev. 2.</li>
+      </ul>
+      <p style="margin-top:10px;">
+        <strong>Option A</strong> — MinIO's STS-compatible API (<code>AssumeRole</code>, <code>AssumeRoleWithWebIdentity</code>, <code>AssumeRoleWithLDAPIdentity</code>) returns temporary, policy-scoped credentials, but every flow still requires an existing trusted identity source first — an OIDC provider or LDAP directory MinIO trusts — neither of which exists today. Heaviest prerequisite of the three; only worth it if the org already has OIDC/LDAP wired into MinIO for other reasons.
+      </p>
+      <p style="margin-top:10px;">
+        <strong>Recommendation:</strong> adopt Option C where an org already issues per-developer credentials elsewhere — it's the closest match to the reviewer's own Voyage-token analogy and needs no new ChunkHound service. Treat Option B (with broker-bound identity as a hard requirement, not an implementation detail) as the target state once ChunkHound is willing to own a small broker service. Option A stays last unless OIDC/LDAP already exists on the MinIO deployment. <strong>All of Phase 2 is explicitly out of scope for this revision</strong> — this section documents direction and rationale, not an implementation commitment.
+      </p>
+    </div>
+
+    <div class="section" id="testing">
+      <h2>Testing</h2>
+      <p>Per <code>AGENTS.md</code> testing philosophy — test our contract, not provider SDK internals or implementation plumbing:</p>
+      <ul>
+        <li>Command accumulator: <code>start_command</code>/<code>record_provider_call</code>/<code>record_internal_error</code>/<code>end_command</code> produce a correctly-shaped <code>command_summary</code> (right action fields, provider rollup grouped by provider+model); concurrent commands (context-var isolation) don't cross-contaminate tallies; exactly one event per command regardless of how many provider calls occurred underneath it.</li>
+        <li><span class="badge new">added (rev. 6)</span> Per-attempt fail accounting: <code>record_provider_call(success=False, error=exc)</code> increments <code>fails</code> and <code>error_types[type(exc).__name__]</code> on the correct <code>(kind, provider, model)</code> group without double-counting <code>calls</code> (i.e. <code>calls</code> increments exactly once per invocation regardless of <code>success</code>).</li>
+        <li><span class="badge new">added (rev. 6)</span> Internal-error fallback exclusivity: a command ending <code>success=False</code> with at least one <code>providers[*][*].fails &gt; 0</code> leaves <code>internal_error_type == null</code>; a command ending <code>success=False</code> with no provider fails and a <code>record_internal_error(exc)</code> call sets <code>internal_error_type</code> to that exception's type name.</li>
+        <li><span class="badge new">added (rev. 6)</span> Retry-loop integration test: point an embedding provider at an invalid endpoint for a bounded number of attempts; confirm the resulting <code>providers.embedding[0]</code> entry has <code>calls == fails == retry_attempts</code>, <code>error_types</code> populated, and no message text anywhere in the emitted event.</li>
+        <li><code>AnalyticsRecorder</code>: buffering, both flush triggers, delete-only-on-successful-upload, retry-on-failure-leaves-buffer-intact, buffer-size-cap, no-op when disabled.</li>
+        <li>Concurrency: two <code>AnalyticsRecorder</code> instances (simulating two processes) never write to each other's buffer files (distinct PID-based names); a <code>record_event()</code> call racing with a flush's rename never gets lost (lands in the file pre-rename or in the fresh file post-rename — assert the union across both flushes always equals every event recorded); a simulated orphaned file (old modification time, from a "different PID") gets picked up and flushed by another recorder's sweep; two recorders racing to sweep the same orphan result in exactly one successful upload and one harmless no-op, never a double-rename error or data loss.</li>
+        <li>Object key generation: correct hierarchical path, uniqueness across concurrent flushes.</li>
+        <li><code>resolve_repository_name()</code>: git-remote-present, no-remote fallback, git-command-failure fallback.</li>
+        <li><code>AnalyticsConfig</code>: env/CLI/JSON precedence loading, including <code>privacy_mode</code>.</li>
+        <li>Privacy modes: <code>full</code> passes through the OS username unchanged; <code>hashed</code> produces a stable hash for the same username across repeated calls within one install (salt persisted and reused, not regenerated per event), and a different hash if the local salt file is absent/regenerated; <code>anonymous</code> always yields <code>user: null</code>. Salt file: created if absent, read if present, correct permissions (not world-readable).</li>
+        <li>Contract test: analytics failures (accumulator or recorder raising) never change command results/errors.</li>
+        <li>Add to mandatory smoke suite: <code>uv run pytest tests/test_smoke.py -v -n auto</code>.</li>
+      </ul>
+    </div>
+
+    <div class="section" id="verification">
+      <h2>Verification</h2>
+      <ol>
+        <li><code>uv run pytest tests/test_smoke.py -v -n auto</code> and <code>uv run mypy chunkhound</code> after implementation.</li>
+        <li>Manual end-to-end check: enable analytics against a local MinIO instance; run <code>chunkhound mcp</code> (stdio) and issue a <code>search</code> call with a known query; confirm exactly one <code>command_summary</code> event is buffered with the correct <code>action.query</code>, a non-empty <code>providers</code> rollup, and every <code>providers[*][*].fails == 0</code>.</li>
+        <li><span class="badge revised">revised (rev. 6)</span> Force a provider call to fail during a command (e.g. point at an invalid embedding endpoint temporarily) and confirm the resulting event has <code>success: false</code> (or a captured error if recovered) and the corresponding <code>providers[kind][*].fails &gt; 0</code> with a non-empty <code>error_types</code>, with no message text present. Separately, force a failure with no vendor call involved and confirm <code>internal_error_type</code> is set instead.</li>
+        <li>Run <code>chunkhound index</code> on a test repo with analytics enabled; confirm exactly one <code>command_summary</code> event with <code>command: "index"</code>, correct <code>action.total_chunks</code>/<code>file_count</code>/<code>mode</code>, and a single aggregated <code>providers.embedding</code> entry (not one event per batch).</li>
+        <li>Confirm disabled-by-default and MinIO-outage-retry behavior as in rev. 2.</li>
+        <li>Set <code>privacy_mode = "hashed"</code>, run two commands, and confirm both events show the same non-reversible <code>user</code> hash; delete the local salt file, run again, and confirm the hash changes (proving the salt — not a fixed algorithm — determines the value). Set <code>privacy_mode = "anonymous"</code> and confirm <code>user</code> is <code>null</code> while <code>os</code>/<code>chunkhound_version</code>/<code>repository</code> are still populated.</li>
+        <li>Run two ChunkHound MCP servers concurrently against two different repositories (analytics enabled on both), issue commands on each, and confirm both processes' buffer files coexist without collision and both flush successfully to distinct S3 keys. Kill one process mid-session before it flushes, then confirm a subsequently-run ChunkHound process's orphan sweep picks up and uploads the killed process's leftover buffer file once its idle threshold is reached.</li>
+      </ol>
+    </div>
+
+    <footer>ChunkHound Per-User Analytics — Design Proposal (ALGINF-5738) — 2026-08-27 (rev. 6)</footer>
+  </div>
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default' });
+</script>
+</body>
+</html>

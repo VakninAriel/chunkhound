@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PR #333 — Matryoshka Embedding Review</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 240px; min-width: 240px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+    #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+    #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #main { flex: 1; padding: 40px; max-width: 900px; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+    header h1 { font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+    .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 16px 0 8px; }
+    .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+    .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; }
+    summary { padding: 12px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 6px; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }
+    details > *:not(summary) { padding: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+
+    /* Verdict banner */
+    .verdict { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; }
+    .verdict.approve { background: #d4edda; border: 2px solid #28a745; }
+    .verdict.changes { background: #fff3cd; border: 2px solid #ffc107; }
+    .verdict.reject { background: #f8d7da; border: 2px solid #dc3545; }
+    .verdict-label { font-size: 20px; font-weight: 800; letter-spacing: 1px; }
+    .verdict.approve .verdict-label { color: #155724; }
+    .verdict.changes .verdict-label { color: #856404; }
+    .verdict.reject .verdict-label { color: #721c24; }
+    .verdict-desc { font-size: 14px; color: #555; }
+
+    /* Severity badges */
+    .sev { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .sev-critical { background: #f8d7da; color: #721c24; }
+    .sev-high { background: #ffd8b1; color: #7d3100; }
+    .sev-medium { background: #fff3cd; color: #856404; }
+    .sev-minor { background: #d4edda; color: #155724; }
+
+    /* Summary KPI strip */
+    .kpi-strip { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .kpi-card { background: #f8f8ff; border: 1px solid #ddd; border-radius: 6px; padding: 14px 20px; min-width: 110px; text-align: center; }
+    .kpi-card .kpi-val { font-size: 28px; font-weight: 800; color: #1e1e2e; }
+    .kpi-card .kpi-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-top: 4px; }
+    .kpi-card.green .kpi-val { color: #28a745; }
+    .kpi-card.yellow .kpi-val { color: #856404; }
+    .kpi-card.red .kpi-val { color: #dc3545; }
+
+    /* Finding card */
+    .finding { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; overflow: hidden; }
+    .finding-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f8f8f8; border-bottom: 1px solid #e0e0e0; }
+    .finding-title { font-weight: 600; font-size: 14px; flex: 1; }
+    .finding-body { padding: 14px; }
+    .finding-body p { font-size: 14px; line-height: 1.7; color: #444; margin-bottom: 8px; }
+    .finding-body .file-ref { font-family: 'Courier New', monospace; font-size: 12px; color: #6c7086; background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+
+    /* Strength list */
+    .strength-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+    .strength-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+    .strength-text { font-size: 14px; line-height: 1.6; color: #444; }
+  </style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#summary">Summary</a>
+  <a href="#pr-info">PR Overview</a>
+  <a href="#strengths">Strengths</a>
+  <a href="#findings">Findings</a>
+  <a href="#architecture">Architecture Notes</a>
+  <a href="#tests">Test Coverage</a>
+  <a href="#decision">Decision</a>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>PR #333 Code Review — Matryoshka Embedding Support</h1>
+    <div class="meta">Reviewer: Ariel Vaknin &nbsp;|&nbsp; 2026-07-07 &nbsp;|&nbsp; chunkhound/chunkhound &nbsp;|&nbsp; Skill: review-pr</div>
+  </header>
+  <div id="main">
+
+    <!-- VERDICT -->
+    <div class="verdict approve">
+      <div class="verdict-label">✅ APPROVE</div>
+      <div class="verdict-desc">Substantial, well-structured feature with excellent test coverage, genuine bug fixes, and clean architecture improvements. Two medium findings worth addressing as follow-up.</div>
+    </div>
+
+    <!-- SUMMARY METRICS -->
+    <div class="section" id="summary">
+      <h2>Summary</h2>
+      <div class="kpi-strip">
+        <div class="kpi-card"><div class="kpi-val">+3899</div><div class="kpi-lbl">Additions</div></div>
+        <div class="kpi-card red"><div class="kpi-val">−318</div><div class="kpi-lbl">Deletions</div></div>
+        <div class="kpi-card"><div class="kpi-val">21</div><div class="kpi-lbl">Files changed</div></div>
+        <div class="kpi-card green"><div class="kpi-val">0</div><div class="kpi-lbl">Critical</div></div>
+        <div class="kpi-card yellow"><div class="kpi-val">1</div><div class="kpi-lbl">High</div></div>
+        <div class="kpi-card yellow"><div class="kpi-val">2</div><div class="kpi-lbl">Medium</div></div>
+        <div class="kpi-card green"><div class="kpi-val">3</div><div class="kpi-lbl">Minor</div></div>
+      </div>
+      <p>Adds variable-dimension (Matryoshka) embedding to OpenAI and VoyageAI providers. Users can now request lower-dimension vectors without switching models, reducing storage costs and enabling quality comparisons. The PR also bundles several genuine bug fixes (env bool parsing, force-kill deadline, non-retryable error propagation) and a key refactor: removing the duplicate <code>EmbeddingProvider</code> Protocol from <code>embeddings.py</code>.</p>
+    </div>
+
+    <!-- PR OVERVIEW -->
+    <div class="section" id="pr-info">
+      <h2>PR Overview</h2>
+      <table>
+        <tr><th>Field</th><th>Value</th></tr>
+        <tr><td>Title</td><td>feat: add Matryoshka variable-dimension embedding support for OpenAI and VoyageAI providers</td></tr>
+        <tr><td>Author</td><td>HananKavitzAmat</td></tr>
+        <tr><td>Status</td><td>Approved (1 approval before this review)</td></tr>
+        <tr><td>Branch</td><td>feature → main</td></tr>
+        <tr><td>Key files</td><td>
+          <code>openai_provider.py</code>, <code>voyageai_provider.py</code>, <code>shared_utils.py</code>,
+          <code>embedding_config.py</code>, <code>interfaces/embedding_provider.py</code>,
+          <code>core/exceptions/embedding.py</code>, <code>tests/unit/test_matryoshka_embeddings.py</code>
+        </td></tr>
+      </table>
+
+      <h3>What changed</h3>
+      <ul>
+        <li><strong>Protocol</strong> — 4 new properties on <code>EmbeddingProvider</code>: <code>output_dims</code>, <code>native_dims</code>, <code>client_side_truncation</code>, <code>supported_dimensions</code></li>
+        <li><strong>Config</strong> — <code>output_dims</code> / <code>client_side_truncation</code> added to <code>EmbeddingConfig</code> with strict validators</li>
+        <li><strong>Exception hierarchy</strong> — <code>EmbeddingProviderError</code> → <code>EmbeddingDimensionError</code> / <code>EmbeddingConfigurationError</code> (non-retryable)</li>
+        <li><strong>Shared utils</strong> — <code>apply_client_side_truncation</code>, <code>l2_normalize</code>, <code>build_dimension_request_param</code>, <code>validate_positive_output_dims</code>, <code>validate_runtime_output_dims_config</code>, <code>validate_embedding_dims</code></li>
+        <li><strong>OpenAI provider</strong> — Matryoshka params, <code>OPENAI_MODEL_CONFIG</code> TypedDict, runtime dim discovery for custom endpoints, updated <code>validate_api_key</code></li>
+        <li><strong>VoyageAI provider</strong> — Matryoshka params, runtime dim discovery, <code>supports_reranking()</code> guard fix</li>
+        <li><strong>Factory / Manager</strong> — Forwards matryoshka params from config to both providers</li>
+        <li><strong>Refactor</strong> — Duplicate Protocol removed from <code>embeddings.py</code>; <code>OPENAI_DEFAULT_MODEL</code> extracted to <code>constants.py</code></li>
+      </ul>
+    </div>
+
+    <!-- STRENGTHS -->
+    <div class="section" id="strengths">
+      <h2>Strengths</h2>
+
+      <div class="strength-item">
+        <div class="strength-icon">🧪</div>
+        <div class="strength-text"><strong>Comprehensive test suite.</strong> 1,895 lines of new matryoshka tests plus updates to existing test files. Covers init-time validation, runtime discovery, client-side truncation, server-side truncation, custom endpoints, error paths, and dimension mismatches for both providers.</div>
+      </div>
+      <div class="strength-item">
+        <div class="strength-icon">🔴</div>
+        <div class="strength-text"><strong>Non-retryable error propagation.</strong> <code>EmbeddingProviderError</code> subclasses are re-raised before the retry loop in both <code>_embed_batch_internal</code> (OpenAI) and <code>_embed_single_batch_locked</code> (VoyageAI). This prevents dimension mismatches and config errors from polluting retry counters and error stats.</div>
+      </div>
+      <div class="strength-item">
+        <div class="strength-icon">🧩</div>
+        <div class="strength-text"><strong>Single source of truth for the Protocol.</strong> The duplicate <code>EmbeddingProvider</code> Protocol in <code>embeddings.py</code> is eliminated. All callers now import from <code>interfaces/embedding_provider.py</code>. <code>EmbeddingManager</code> type annotations updated accordingly.</div>
+      </div>
+      <div class="strength-item">
+        <div class="strength-icon">🔧</div>
+        <div class="strength-text"><strong>Genuine bug fixes bundled.</strong> Env bool parsing now fails explicitly on garbage values (e.g. <code>"maybe"</code>, <code>"2"</code>), the force-kill deadline is separated from the graceful timeout, and VoyageAI's <code>_rerank_via_sdk</code> now guards against a <code>None</code> rerank model that previously caused AttributeError.</div>
+      </div>
+      <div class="strength-item">
+        <div class="strength-icon">🌐</div>
+        <div class="strength-text"><strong>Runtime dimension discovery for custom endpoints.</strong> Custom OpenAI-compatible endpoints (Ollama, vLLM, etc.) can reuse known model names without triggering static validation. Dimension is discovered from the first untruncated response, with a documented 1536 pre-discovery fallback.</div>
+      </div>
+      <div class="strength-item">
+        <div class="strength-icon">🏗️</div>
+        <div class="strength-text"><strong>Shared validation utilities.</strong> Validation logic extracted into <code>shared_utils.py</code> and reused across OpenAI, VoyageAI, and config layers. No duplication of range/type checks between providers.</div>
+      </div>
+    </div>
+
+    <!-- FINDINGS -->
+    <div class="section" id="findings">
+      <h2>Findings</h2>
+
+      <!-- HIGH -->
+      <h3>High</h3>
+
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev sev-high">HIGH</span>
+          <span class="finding-title"><code>dims</code> property mutates state and logs a warning — side effect in a getter</span>
+        </div>
+        <div class="finding-body">
+          <p>The <code>dims</code> property in <code>OpenAIEmbeddingProvider</code> logs a <code>logger.warning</code> and flips <code>self._warned_default_dims = True</code> inside a property getter. Properties are expected to be pure reads; callers that access <code>.dims</code> for dimension introspection (e.g. in dimension validation, repr, or health-check) will trigger a spurious log and a state mutation they didn't intend.</p>
+          <p><span class="file-ref">chunkhound/providers/embeddings/openai_provider.py ~L650</span></p>
+          <details>
+            <summary>Suggested fix</summary>
+            <div>
+              <p>Move the warning + flag to <code>_ensure_client</code> or the first <code>embed()</code> call, where "no static metadata and no discovered dims yet" is explicitly an active-use signal — not a read signal.</p>
+              <pre><code># In _embed_batch_internal, BEFORE the API call:
+if not self._warned_default_dims and not self._uses_static_model_dims():
+    self._warned_default_dims = True
+    logger.warning(
+        f"No static config for model '{self._model}'; using 1536 until "
+        "first embed() call discovers the runtime dimension."
+    )
+# dims property becomes a pure getter:
+@property
+def dims(self) -> int:
+    if self._output_dims is not None:
+        return self._output_dims
+    if self._uses_static_model_dims():
+        return self._model_config[self._model]["dims"]
+    if self._discovered_native_dims is not None:
+        return self._discovered_native_dims
+    return 1536</code></pre>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <!-- MEDIUM -->
+      <h3>Medium</h3>
+
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev sev-medium">MEDIUM</span>
+          <span class="finding-title">Dead code in <code>extract_cli_overrides</code> — <code>embedding_output_dims</code> attr never exists</span>
+        </div>
+        <div class="finding-body">
+          <p>The CLI argument is registered as <code>--output-dims / --embedding-output-dims</code>. argparse uses the first long option to derive the dest, so the namespace attribute is always <code>args.output_dims</code>. The second block that checks <code>hasattr(args, "embedding_output_dims")</code> can never be True and is dead code.</p>
+          <p><span class="file-ref">chunkhound/core/config/embedding_config.py ~L714–723</span></p>
+          <details>
+            <summary>Affected code</summary>
+            <div>
+<pre><code># Current (has dead block):
+if hasattr(args, "output_dims") and args.output_dims is not None:
+    overrides["output_dims"] = args.output_dims
+if (
+    hasattr(args, "embedding_output_dims")       # ← always False
+    and args.embedding_output_dims is not None
+):
+    overrides["output_dims"] = args.embedding_output_dims  # ← dead
+
+# Fix: remove the second block entirely</code></pre>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev sev-medium">MEDIUM</span>
+          <span class="finding-title"><code>_bare_provider</code> test helper missing attrs added in this PR</span>
+        </div>
+        <div class="finding-body">
+          <p><code>_bare_provider()</code> in <code>provider_test_helpers.py</code> constructs an <code>OpenAIEmbeddingProvider</code> via <code>__new__()</code>, bypassing <code>__init__</code>. This PR adds <code>_qwen_model_config</code> and <code>_qwen_rerank_config</code> inside <code>_configure_qwen_batch_sizes</code>, which is called from <code>__init__</code>. The bare provider is missing these attributes. Any future test that exercises Qwen paths on the bare provider will hit <code>AttributeError</code>.</p>
+          <p><span class="file-ref">tests/unit/provider_test_helpers.py ~L47–90</span></p>
+          <details>
+            <summary>Suggested fix</summary>
+            <div>
+              <p>Add the missing attrs to the bare provider builder:</p>
+              <pre><code>provider._qwen_model_config = None
+provider._qwen_rerank_config = None</code></pre>
+              <p>Or consider adding a <code>_set_defaults()</code> classmethod to <code>OpenAIEmbeddingProvider</code> that initialises instance attributes without connecting to external services, making <code>__new__()</code>-based helpers unnecessary.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <!-- MINOR -->
+      <h3>Minor</h3>
+
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev sev-minor">MINOR</span>
+          <span class="finding-title">Magic number <code>1536</code> used as default dims in 3+ places</span>
+        </div>
+        <div class="finding-body">
+          <p>The pre-discovery fallback dimension <code>1536</code> appears inline in <code>dims</code>, <code>native_dims</code>, and model config. Extracting a <code>OPENAI_DEFAULT_DIMS = 1536</code> constant (alongside <code>OPENAI_DEFAULT_MODEL</code> already in <code>constants.py</code>) would consolidate them and make future model updates easier.</p>
+          <p><span class="file-ref">chunkhound/providers/embeddings/openai_provider.py ~L640, ~L690, ~L377</span></p>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev sev-minor">MINOR</span>
+          <span class="finding-title"><code>_trust_runtime_output_dims()</code> name is counter-intuitive</span>
+        </div>
+        <div class="finding-body">
+          <p>The method returns <code>True</code> for custom (non-official) endpoints to <em>skip</em> static model validation. The name "trust runtime" doesn't communicate that "trust = skip static checks". A clearer name would be <code>_is_custom_openai_endpoint()</code> or <code>_skip_static_model_validation()</code>.</p>
+          <p><span class="file-ref">chunkhound/providers/embeddings/openai_provider.py ~L547</span></p>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev sev-minor">MINOR</span>
+          <span class="finding-title"><code>FakeEmbeddingProvider.supported_dimensions</code> returns only 2 values when <code>output_dims</code> is set</span>
+        </div>
+        <div class="finding-body">
+          <p>When <code>output_dims=512</code> and <code>dims=1536</code>, the fake returns <code>[1536, 512]</code>, implying only those two dimensions are valid. A real matryoshka model returns a range. This is fine for the current tests but could cause false-passing tests if future tests check <code>in supported_dimensions</code> for intermediate values.</p>
+          <p><span class="file-ref">tests/fixtures/fake_providers.py ~L254</span></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARCHITECTURE NOTES -->
+    <div class="section" id="architecture">
+      <h2>Architecture Notes</h2>
+
+      <h3>What is correct</h3>
+      <ul>
+        <li><strong>Validation layering</strong> — init-time validation (fail fast for known official models) vs. embed-time validation (fail gracefully for unknown/custom models) is the right separation. The <code>_validate_output_dims_config_for</code> pattern shared across <code>__init__</code> and <code>update_config</code> avoids duplicated rules.</li>
+        <li><strong>Exception hierarchy placement</strong> — <code>core/exceptions/embedding.py</code> is the right home; re-exported through <code>interfaces/embedding_provider.py</code> for convenience is clean.</li>
+        <li><strong>VoyageAI <code>supports_reranking()</code></strong> — verified against current <code>main</code>: <code>rerank_model</code> defaults to <code>VOYAGE_DEFAULT_RERANK_MODEL</code> ("rerank-2.5"), not <code>None</code>, so the new logic (<code>return self._rerank_model is not None</code> for official API) is not a behavioral regression.</li>
+        <li><strong>Force-kill deadline fix</strong> — <code>_FORCE_KILL_DEADLINE = 2.0</code> as a module-level constant (not hardcoded at use site) and replacing the real subprocess mock test with an actual SIGTERM-ignoring process is strictly better.</li>
+      </ul>
+
+      <h3>Potential concern: two-phase dimension validation in <code>_embed_single_batch_locked</code> (VoyageAI)</h3>
+      <p style="margin-top:8px;">The method validates raw dims before truncation and final dims after. For unknown models where <code>_expected_raw_dims()</code> returns <code>None</code>, the first validation is skipped — correct. The double-validation is a bit verbose but adds defense in depth and is well-commented.</p>
+
+      <h3>Breaking changes</h3>
+      <ul>
+        <li><code>supports_matryoshka()</code> removed from Protocol (replaced by property metadata). If any downstream code called this directly it will break — but a search of the current repo shows no callers.</li>
+        <li><code>_discovered_dims</code> renamed to <code>_discovered_native_dims</code> — internal only, no external callers.</li>
+      </ul>
+    </div>
+
+    <!-- TEST COVERAGE -->
+    <div class="section" id="tests">
+      <h2>Test Coverage</h2>
+      <table>
+        <tr><th>Area</th><th>File</th><th>Assessment</th></tr>
+        <tr>
+          <td>Matryoshka — both providers</td>
+          <td><code>tests/unit/test_matryoshka_embeddings.py</code></td>
+          <td>1,895 lines. Covers init validation, output_dims, client_side_truncation, runtime discovery, dimension mismatch errors, update_config, FakeProvider behavior.</td>
+        </tr>
+        <tr>
+          <td>Config env vars</td>
+          <td><code>tests/test_config_integration.py</code></td>
+          <td>New parametrize test for invalid SSL bool env vars (<code>"maybe"</code>, <code>"2"</code>, <code>""</code>). Matches the <code>_require_env_bool</code> fix.</td>
+        </tr>
+        <tr>
+          <td>OpenAI auth matrix</td>
+          <td><code>tests/unit/test_embedding_config_provider_check.py</code></td>
+          <td>Parametrized availability matrix (official, custom, Azure w/o key, Azure w/o version). Health-check tests for all auth paths.</td>
+        </tr>
+        <tr>
+          <td>Daemon force-kill</td>
+          <td><code>tests/unit/test_daemon_lock_recovery.py</code></td>
+          <td>Real subprocess (SIGTERM-ignored) replaces brittle mock test. Platform-gated (<code>skipif win32</code>). Adds <code>proc.wait()</code> cleanup.</td>
+        </tr>
+        <tr>
+          <td>Test helpers</td>
+          <td><code>tests/unit/provider_test_helpers.py</code></td>
+          <td>New file — <code>_bare_provider()</code> and <code>_ok_response()</code>. Avoids repeated setup code across matryoshka tests. <strong>Missing attrs noted in Medium finding above.</strong></td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- DECISION -->
+    <div class="section" id="decision">
+      <h2>Decision</h2>
+      <div class="verdict approve">
+        <div class="verdict-label">✅ APPROVE</div>
+        <div class="verdict-desc">
+          Feature is correct, well-tested, and architecturally clean. All 3 bugs cited in the PR description (env bool parsing, force-kill deadline, non-retryable error retry) are verified genuine fixes. No critical or blocking issues.<br><br>
+          <strong>Recommended follow-up (not blocking):</strong>
+          <ul style="margin-top:8px; padding-left:20px;">
+            <li>Move the warning/mutation out of <code>dims</code> property into the embed path (High)</li>
+            <li>Remove dead <code>embedding_output_dims</code> block in <code>extract_cli_overrides</code> (Medium)</li>
+            <li>Add <code>_qwen_model_config = None</code> / <code>_qwen_rerank_config = None</code> to <code>_bare_provider()</code> (Medium)</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>Review time</h3>
+      <p>~25 minutes. Read full diff (~5,400 lines), verified VoyageAI <code>rerank_model</code> default against main, checked <code>validate_rerank_configuration</code> logic, confirmed argparse dest behaviour for the dead-code finding.</p>
+    </div>
+
+    <footer>PR #333 Matryoshka Embedding Review — 2026-07-07 — Ariel Vaknin via Claude Code</footer>
+  </div>
+</div>
+</body>
+</html>

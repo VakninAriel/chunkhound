@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TurboVec POC — Standalone Feasibility Benchmark Plan</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+  #sidebar { width: 260px; min-width: 260px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+  #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+  #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+  #main { flex: 1; padding: 40px; max-width: 920px; }
+  header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+  header h1 { font-size: 22px; font-weight: 600; }
+  header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+  .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+  .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+  .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 16px 0 8px; }
+  .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+  .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+  .section ol li, .section ul li { margin-bottom: 6px; }
+  pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+  code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+  pre code { background: none; color: inherit; padding: 0; }
+  details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; }
+  summary { padding: 12px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 6px; }
+  details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }
+  details > *:not(summary) { padding: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+  th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; }
+  td { padding: 9px 12px; border-bottom: 1px solid #eee; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .callout { background: #eef6ff; border-left: 4px solid #89b4fa; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; color: #1e3a5f; }
+  .callout.warning { background: #fff8ec; border-color: #f9c642; color: #7a5900; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; margin-left: 6px; }
+  .badge-fixed { background: #fee2e2; color: #991b1b; }
+  .tree { font-family: 'Courier New', Consolas, monospace; font-size: 13px; background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; line-height: 1.6; white-space: pre; overflow-x: auto; }
+  footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+</style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#context">Context</a>
+  <a href="#location">Where It Lives</a>
+  <a href="#data">Sourcing Real Data</a>
+  <a href="#measures">What It Measures</a>
+  <a href="#criteria">Success Criteria</a>
+  <a href="#conventions">Rust Conventions</a>
+  <a href="#steps">Ordered Steps</a>
+  <a href="#verification">Verification</a>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>TurboVec POC — Standalone Feasibility Benchmark Plan</h1>
+    <div class="meta">Repo: my_chunkhound | Base branch: main | Scope: benchmark only, no production changes</div>
+  </header>
+  <div id="main">
+
+    <div class="section" id="context">
+      <h2>Context</h2>
+      <p><code>turbovec_integration_design_report.html</code> (untracked at repo root) proposes replacing DuckDB-VSS/HNSW with the <code>turbovec</code> Rust crate (Google's TurboQuant algorithm) for quantized vector storage/search — claiming 16x compression at 4-bit, ~0.997 recall@1, and a way to reload a search index at startup from a serialized blob with zero re-embedding. That's a 2–3 week production migration across 4 phases, so before committing to it we want a <strong>standalone POC that validates the load-bearing technical claims on real data</strong>, with no changes to production code, schema, or the <code>chunkhound_native</code> PyO3 surface.</p>
+
+      <p>Two prior research passes covered the groundwork:</p>
+      <ul>
+        <li>Located and summarized the design doc and its lineage — it assumes the unmerged <code>feat/thin-rust-embed-pipeline</code> branch, but this POC is built on <code>main</code> instead, decoupled from that branch.</li>
+        <li>Mapped the current architecture: DuckDB tables <code>embeddings_{dims}</code> + the <code>vss</code> extension's HNSW index, searched via <code>duckdb_provider.py:3875 search_semantic()</code>; <code>chunkhound_native</code>'s <code>RustDbWriter</code> has no search method today; no <code>turbovec</code> reference exists anywhere in the codebase yet.</li>
+        <li><strong>Verified the actual <code>turbovec</code> v0.9.0 crate API against its real source</strong> (not just the design doc's sketch), surfacing two corrections:</li>
+      </ul>
+
+      <div class="callout warning">
+        <strong>Correction 1 — no free <code>from_parts()</code> on <code>IdMapIndex</code>.</strong> Only the inner <code>TurboQuantIndex</code> has <code>from_parts()</code>, and it's id-less (positional only). The real whole-index reconstruction path is <code>IdMapIndex::to_bytes()</code>/<code>from_bytes()</code> — a full blob roundtrip. Reconstructing from decomposed per-vector parts (the design doc's <code>embeddings_quantized</code> fallback) requires hand-rolling an id-mapping layer on top of <code>TurboQuantIndex::from_parts()</code> — not free. The POC tests both paths explicitly so this is proven, not assumed.
+      </div>
+      <div class="callout warning">
+        <strong>Correction 2 — 4-bit compression is ~8x, not 16x.</strong> <code>1536 × 4 / 8 = 768</code> bytes, not 384. The design doc's 16x figure is actually the 2-bit number. The POC's compression measurement surfaces the real ratio.
+      </div>
+
+      <p>The POC's job: produce trustworthy numbers on real data (not synthetic vectors) for compression, recall, latency, and the serialize/reload roundtrip, then decide go/no-go before anyone invests in the full migration.</p>
+    </div>
+
+    <div class="section" id="location">
+      <h2>Where It Lives</h2>
+      <p><code>test-crates/turbovec-poc/</code> — a fully standalone Rust crate with its own <code>Cargo.toml</code>, entirely decoupled from <code>chunkhound_native</code> (which has no <code>[workspace]</code> table, so a nested crate here never touches its <code>Cargo.lock</code>, dependency graph, <code>abi3-py310</code> feature set, or DuckDB/PyO3 linkage). This is a throwaway spike: no schema changes, no new <code>RustDbWriter</code> methods, nothing touching the production build.</p>
+
+      <div class="callout warning">
+        <strong>Gitignore correction<span class="badge badge-fixed">verified</span>:</strong> <code>test-crates/</code> is <em>not</em> wholly ignored — only <code>target/</code> directories are (via the generic <code>target/</code> rule in root <code>.gitignore</code>). <code>git status</code> currently shows <code>!! test-crates/</code> only because the existing <code>test-crates/embed-tests/</code> contains nothing but an ignored <code>target/</code> dir. New tracked-looking files (<code>Cargo.toml</code>, <code>src/*.rs</code>, and especially a ~75MB fixture binary) would show up as untracked, not ignored. <strong>Add <code>test-crates/turbovec-poc/.gitignore</code></strong> containing <code>fixtures/</code> and <code>target/</code> so the dumped embeddings and build artifacts never risk being staged.
+      </div>
+
+      <h3>Directory structure</h3>
+      <div class="tree">test-crates/turbovec-poc/
+├── .gitignore                 # fixtures/, target/
+├── Cargo.toml
+├── README.md                  # what this proves, how to run, corrections found, go/no-go conclusion
+├── scripts/
+│   └── dump_embeddings.py     # one-off extraction from .chunkhound/db/chunks.db
+├── fixtures/
+│   └── embeddings_256.bin     # gitignored, ~75MB
+├── src/
+│   ├── main.rs                 # entrypoint: runs the full benchmark, prints report
+│   ├── fixture.rs              # flat-file reader for the dump format
+│   ├── bruteforce.rs           # exact brute-force cosine ground truth
+│   └── metrics.rs              # recall@k, latency percentiles, compression math
+└── tests/
+    └── roundtrip.rs            # to_bytes()/from_bytes() AND from_parts()-emulation correctness</div>
+
+      <h3>Cargo.toml</h3>
+      <pre><code>[package]
+name = "turbovec-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+turbovec = "0.9"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3</code></pre>
+      <p>No <code>duckdb</code>, no <code>pyo3</code>. <code>turbovec</code> 0.9.0's own deps (<code>faer</code>, <code>ndarray</code>, <code>rayon</code>, etc.) are all pure Rust — reachable via the corporate proxy's crates.io sparse index, no other network access needed.</p>
+    </div>
+
+    <div class="section" id="data">
+      <h2>Sourcing Real Data</h2>
+      <p>This repo's own <code>.chunkhound/db/chunks.db</code> has a real corpus: table <code>embeddings_256</code>, <strong>73,474 vectors</strong>, 256-dim (Matryoshka-reduced from 1536 per <code>QWEN3_TUNING.md</code>), <code>provider='openai', model='qwen3-embedding-4b'</code>. No 1536-dim table exists locally — the POC runs at 256-dim, a deviation from the design doc's headline numbers, but real clustered code-embedding vectors at 256-dim still exercise realistic recall characteristics far better than random vectors.</p>
+
+      <h3>scripts/dump_embeddings.py</h3>
+      <pre><code>import duckdb, struct
+
+con = duckdb.connect("/home/e119870/views/g/my_chunkhound/.chunkhound/db/chunks.db", read_only=True)
+rows = con.execute("SELECT chunk_id, embedding FROM embeddings_256 ORDER BY id").fetchall()
+
+with open("fixtures/embeddings_256.bin", "wb") as f:
+    f.write(b"CHKNVEC1")
+    f.write(struct.pack("&lt;II", len(rows), 256))
+    for chunk_id, emb in rows:
+        f.write(struct.pack("&lt;q", chunk_id))
+        f.write(struct.pack(f"&lt;{len(emb)}f", *emb))</code></pre>
+      <p><code>read_only=True</code> avoids the single-writer lock conflicting with any running daemon. The fixed little-endian layout means <code>fixture.rs</code> needs no parsing crate.</p>
+    </div>
+
+    <div class="section" id="measures">
+      <h2>What the Benchmark Measures</h2>
+      <p><code>src/main.rs</code> runs the following stages in order and prints one results report:</p>
+      <ol>
+        <li><strong>Compression</strong>: <code>dim*4</code> bytes (float32) vs <code>IdMapIndex::to_bytes().len() / n_vectors</code>, for both <code>bit_width=2</code> and <code>bit_width=4</code>.</li>
+        <li><strong>Recall@1 and Recall@10</strong> of TurboVec search vs. exact brute-force cosine (<code>bruteforce.rs</code>, plain O(n·dim) loop, no DuckDB dependency) — using a <strong>held-out query sample</strong> (e.g. 500 vectors excluded from the index before building it, not self-matched against the corpus that contains them) so recall reflects real nearest-neighbor retrieval, not trivial self-match. Run for both bit-widths.</li>
+        <li><strong>Search latency</strong>: median/p95 queries/sec, TurboVec vs. brute-force, at the ~73K-vector scale (informational only — the real win is at 1M+ vectors, so treat as a sanity check, not a gate).</li>
+        <li><strong><code>to_bytes()</code>/<code>from_bytes()</code> roundtrip</strong>: build index → serialize → drop → reconstruct → same query batch → assert byte-identical <code>(scores, ids)</code>. This is the single most important claim — the whole "why Rust" rationale.</li>
+        <li><strong><code>TurboQuantIndex::from_parts()</code> emulation</strong>: pull <code>packed_codes()</code>/<code>scales()</code>/<code>tqplus_shift()</code>/<code>tqplus_scale()</code> off the built index's inner <code>TurboQuantIndex</code>, reconstruct via <code>from_parts()</code>, hand-reattach ids via a parallel <code>Vec&lt;u64&gt;</code>, confirm search still matches. Report clearly whether this worked as the design doc assumed or needed the hand-rolled id layer (per Correction 1, expect the latter).</li>
+      </ol>
+      <details>
+        <summary>Why <code>tests/roundtrip.rs</code> is separate from the benchmark report</summary>
+        <p>Stages 4 and 5 above are encoded as real <code>#[test]</code> assertions, not just printed numbers — they're correctness claims, not benchmarks. <code>cargo test</code> fails loudly if either roundtrip diverges, so the benchmark's other numbers can only be trusted once these pass.</p>
+      </details>
+    </div>
+
+    <div class="section" id="criteria">
+      <h2>Success Criteria (Go / No-Go)</h2>
+      <table>
+        <tr><th>Check</th><th>Threshold</th></tr>
+        <tr><td>Compression @ 4-bit</td><td>≥ 7.5x (corrected from the doc's stated 16x)</td></tr>
+        <tr><td>Compression @ 2-bit</td><td>≥ 14x</td></tr>
+        <tr><td>Recall@1 (4-bit) vs brute-force</td><td>≥ 0.99</td></tr>
+        <tr><td>Recall@10 (4-bit) vs brute-force</td><td>≥ 0.999</td></tr>
+        <tr><td><code>to_bytes()</code>/<code>from_bytes()</code> roundtrip</td><td>bit-identical results, every test query</td></tr>
+        <tr><td><code>from_parts()</code> fallback emulation</td><td>works with hand-rolled id reattachment, or explicitly flagged as a production design gap</td></tr>
+        <tr><td>Search latency</td><td>not dramatically slower than brute-force at 73K scale (sanity check only)</td></tr>
+        <tr><td>Build</td><td><code>cargo build --release</code> succeeds via crates.io through the proxy, no extra host access</td></tr>
+      </table>
+      <div class="callout">Recall or roundtrip failure is a hard <strong>no-go</strong> regardless of compression numbers — correctness isn't negotiable for a search feature.</div>
+    </div>
+
+    <div class="section" id="conventions">
+      <h2>Rust Conventions</h2>
+      <ul>
+        <li><code>#![forbid(unsafe_code)]</code> at the top of <code>main.rs</code> even though outside the production build (turbovec's public API needs no <code>unsafe</code>).</li>
+        <li>No PyO3 boundary in this POC, so AGENTS.md's <code>.unwrap()</code> restriction doesn't apply — ordinary <code>.unwrap()</code>/<code>.expect()</code> is fine for this throwaway spike; note that explicitly in the POC's README so it's not mistaken for production style.</li>
+        <li>Still run <code>cargo fmt</code> and <code>cargo clippy --all-targets -- -D warnings</code> inside <code>test-crates/turbovec-poc/</code> before calling it done.</li>
+        <li><code>cargo test</code> must pass before trusting the benchmark numbers.</li>
+        <li><code>PATH="$HOME/.cargo/bin:$PATH"</code> needed in a fresh shell (cargo/rustc installed but not on default PATH here).</li>
+      </ul>
+    </div>
+
+    <div class="section" id="steps">
+      <h2>Ordered Steps</h2>
+      <ol>
+        <li><code>mkdir -p test-crates/turbovec-poc</code>, add <code>.gitignore</code> (<code>fixtures/</code>, <code>target/</code>), <code>Cargo.toml</code>.</li>
+        <li><code>cargo build</code> once to confirm <code>turbovec</code> fetches cleanly through the proxy.</li>
+        <li>Write and run <code>scripts/dump_embeddings.py</code>; confirm <code>fixtures/embeddings_256.bin</code> is ~75MB / 73,474 records.</li>
+        <li>Implement <code>fixture.rs</code> (reader) and <code>bruteforce.rs</code> (ground truth).</li>
+        <li>Implement <code>metrics.rs</code> (recall@k, latency, compression math).</li>
+        <li>Implement <code>main.rs</code>: load fixture → hold out query sample → build <code>IdMapIndex</code> at both bit-widths → run all measurements → print report.</li>
+        <li>Implement <code>tests/roundtrip.rs</code> for steps 4/5 correctness checks; <code>cargo test</code> must pass.</li>
+        <li><code>cargo fmt</code>, <code>cargo clippy --all-targets -- -D warnings</code>; fix warnings.</li>
+        <li><code>cargo run --release --bin bench</code>; capture real numbers; compare against thresholds; write go/no-go conclusion into the POC's <code>README.md</code>.</li>
+        <li>If go: flag the two design-doc corrections (no <code>IdMapIndex::from_parts()</code>; ~8x not 16x at 4-bit) back before anyone commits to the full 4-phase migration.</li>
+      </ol>
+    </div>
+
+    <div class="section" id="verification">
+      <h2>Verification</h2>
+      <ul>
+        <li><code>cd test-crates/turbovec-poc && cargo test</code> — roundtrip correctness must pass.</li>
+        <li><code>cargo clippy --all-targets -- -D warnings</code> — no warnings.</li>
+        <li><code>cargo run --release --bin bench</code> — inspect the printed report against the success-criteria table above; this is the actual deliverable (real numbers, not simulated).</li>
+        <li><code>git status</code> — confirm <code>fixtures/embeddings_256.bin</code> and other POC files do not appear as staged/trackable (the new <code>.gitignore</code> should keep them out).</li>
+      </ul>
+    </div>
+
+    <footer>TurboVec POC — Standalone Feasibility Benchmark Plan</footer>
+  </div>
+</div>
+</body>
+</html>

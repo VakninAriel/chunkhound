@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound Compaction — Code Review Findings &amp; Fix Plan</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 240px; min-width: 240px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 12px; }
+    #sidebar a { display: block; padding: 8px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+    #sidebar a:hover { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #sidebar .nav-group { margin-top: 8px; }
+    #sidebar .nav-group-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; padding: 10px 20px 4px; }
+    #sidebar a.indent { padding-left: 32px; font-size: 12px; color: #a6adc8; }
+    #main { flex: 1; padding: 40px; max-width: 900px; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; margin-bottom: 32px; }
+    header h1 { font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    header .branch { display: inline-block; background: #313244; color: #89b4fa; font-family: 'Courier New', monospace; font-size: 12px; padding: 3px 10px; border-radius: 4px; margin-top: 8px; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; }
+    .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 20px 0 8px; }
+    .section h3:first-of-type { margin-top: 4px; }
+    .section p, .section li { font-size: 14px; line-height: 1.7; color: #555; }
+    .section ul, .section ol { padding-left: 20px; margin-top: 8px; }
+    .section li { margin-bottom: 4px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; }
+    summary { padding: 12px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 6px; user-select: none; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }
+    details > *:not(summary) { padding: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+    .badge-critical { background: #fee2e2; color: #991b1b; }
+    .badge-important { background: #fef3c7; color: #92400e; }
+    .badge-minor { background: #dcfce7; color: #166534; }
+    .badge-false { background: #e0e7ff; color: #3730a3; }
+    .badge-fix { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+    .badge-nofix { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .issue-card { border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+    .issue-card .issue-header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: #f8f9fa; border-bottom: 1px solid #e0e0e0; }
+    .issue-card .issue-num { font-size: 18px; font-weight: 800; color: #1e1e2e; width: 28px; }
+    .issue-card .issue-title { font-size: 14px; font-weight: 600; color: #1e1e2e; flex: 1; }
+    .issue-card .issue-file { font-family: 'Courier New', monospace; font-size: 12px; color: #6c7086; background: #eff1f5; padding: 2px 8px; border-radius: 4px; }
+    .issue-card .issue-body { padding: 16px 20px; }
+    .issue-card .issue-body p { font-size: 14px; line-height: 1.7; color: #555; margin-bottom: 10px; }
+    .callout { border-left: 4px solid; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; line-height: 1.6; }
+    .callout-info { background: #eff8ff; border-color: #89b4fa; color: #1e3a5f; }
+    .callout-warn { background: #fffbeb; border-color: #f59e0b; color: #78350f; }
+    .callout-danger { background: #fef2f2; border-color: #ef4444; color: #7f1d1d; }
+    .callout-success { background: #f0fdf4; border-color: #22c55e; color: #14532d; }
+    .fix-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; margin: 14px 0 6px; }
+    .dep-arrow { font-size: 13px; color: #89b4fa; margin: 0 6px; }
+    .commit-step { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .commit-num { background: #1e1e2e; color: #cdd6f4; font-weight: 700; font-size: 12px; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+    .commit-text { flex: 1; }
+    .commit-text strong { color: #1e1e2e; display: block; margin-bottom: 2px; }
+    .commit-text span { color: #888; font-size: 13px; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 32px; }
+  </style>
+</head>
+<body>
+<nav id="sidebar">
+  <h2>Contents</h2>
+  <a href="#summary">Summary</a>
+  <div class="nav-group">
+    <div class="nav-group-label">Issues</div>
+    <a class="indent" href="#issue-1">#1 — _last_error lock</a>
+    <a class="indent" href="#issue-2">#2 — repack dry-run ✗</a>
+    <a class="indent" href="#issue-3">#3 — deferred work loss</a>
+    <a class="indent" href="#issue-4">#4 — swallowed exceptions</a>
+    <a class="indent" href="#issue-5">#5 — gate race</a>
+    <a class="indent" href="#issue-6">#6 — native import</a>
+    <a class="indent" href="#issue-7">#7 — git artifact</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Plan</div>
+    <a href="#order">Fix Order</a>
+    <a href="#verification">Verification</a>
+  </div>
+</nav>
+<div style="flex:1; display:flex; flex-direction:column;">
+  <header>
+    <h1>ChunkHound Compaction — Code Review Findings &amp; Fix Plan</h1>
+    <div class="meta">Generated: 2026-06-08 &nbsp;|&nbsp; Branch: <span style="color:#cba6f7">stack/1-compaction</span> &nbsp;|&nbsp; Reviewer: automated subagent</div>
+    <div><span class="branch">base: 1aa0ebd4 → head: acdec111</span></div>
+  </header>
+  <div id="main">
+
+    <!-- SUMMARY -->
+    <div class="section" id="summary">
+      <h2>Summary</h2>
+      <p>Code review of the <code>stack/1-compaction</code> branch surfaced 7 issues. One is a <strong>reviewer false positive</strong> (Issue 2 — the dry-run path is correctly connected). The remaining <strong>6 are real</strong> and must be addressed before merge.</p>
+
+      <table style="margin-top:16px;">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Severity</th>
+            <th>Area</th>
+            <th>File</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>1</strong></td>
+            <td><span class="badge badge-critical">Critical</span></td>
+            <td><code>_last_error</code> missing lock</td>
+            <td><code>compaction_service.py</code></td>
+            <td><span class="badge badge-fix">Fix required</span></td>
+          </tr>
+          <tr>
+            <td><strong>2</strong></td>
+            <td><span class="badge badge-false">False positive</span></td>
+            <td>repack dry-run not connected</td>
+            <td><code>repack.py</code></td>
+            <td><span class="badge badge-nofix">No fix needed</span></td>
+          </tr>
+          <tr>
+            <td><strong>3</strong></td>
+            <td><span class="badge badge-important">Important</span></td>
+            <td>except block loses deferred work</td>
+            <td><code>mcp_server/base.py</code></td>
+            <td><span class="badge badge-fix">Fix required</span></td>
+          </tr>
+          <tr>
+            <td><strong>4</strong></td>
+            <td><span class="badge badge-important">Important</span></td>
+            <td>recovery swallows all exceptions</td>
+            <td><code>mcp_server/base.py</code></td>
+            <td><span class="badge badge-fix">Comment update (after #3)</span></td>
+          </tr>
+          <tr>
+            <td><strong>5</strong></td>
+            <td><span class="badge badge-important">Important</span></td>
+            <td>connection gate race on reconnect</td>
+            <td><code>duckdb_provider.py</code></td>
+            <td><span class="badge badge-fix">Fix required</span></td>
+          </tr>
+          <tr>
+            <td><strong>6</strong></td>
+            <td><span class="badge badge-important">Important</span></td>
+            <td>native extension hard import</td>
+            <td><code>chunkhound_native/__init__.py</code></td>
+            <td><span class="badge badge-fix">Fix required</span></td>
+          </tr>
+          <tr>
+            <td><strong>7</strong></td>
+            <td><span class="badge badge-minor">Minor</span></td>
+            <td>HTML artifact tracked in git</td>
+            <td><code>.gitignore</code></td>
+            <td><span class="badge badge-fix">Fix required</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ISSUE 1 -->
+    <div class="section" id="issue-1">
+      <h2>Issue 1 — <code>_last_error</code> Missing Lock Protection <span class="badge badge-critical" style="vertical-align:middle;margin-left:8px;">Critical</span></h2>
+      <p><strong>File:</strong> <code>chunkhound/services/compaction_service.py</code> &nbsp;·&nbsp; lines 86, 90, 248, 258, 265</p>
+
+      <h3>Problem</h3>
+      <p><code>_last_error</code> is written from async context without holding <code>self._lock</code> (a <code>threading.Lock</code>). The <code>last_error</code> property and <code>clear_last_error()</code> also read/write without the lock. This creates a narrow race where the MCP server briefly reports a clean status between two writes — or reads a partially-cleared value while a new error is being stored.</p>
+
+      <div class="callout callout-danger">
+        <strong>Race scenario:</strong> Background compaction stores <code>_last_error = cb_err</code> (line 258) → concurrent MCP RPC reads <code>last_error</code> (line 86) → compaction <code>finally</code> block clears to <code>None</code> (line 248). The read sees stale or half-cleared state with no lock to prevent it.
+      </div>
+
+      <h3>Fix — 5 sites, same pattern</h3>
+      <div class="fix-label">last_error property (line 86)</div>
+      <pre><code>@property
+def last_error(self) -> Exception | None:
+    with self._lock:
+        return self._last_error</code></pre>
+
+      <div class="fix-label">clear_last_error() (line 90)</div>
+      <pre><code>def clear_last_error(self) -> None:
+    with self._lock:
+        self._last_error = None</code></pre>
+
+      <div class="fix-label">_do_compaction_with_callback — lines 248, 258, 265 (same pattern for all 3)</div>
+      <pre><code># Each bare assignment becomes:
+with self._lock:
+    self._last_error = None   # or cb_err or e</code></pre>
+
+      <div class="callout callout-info">
+        <code>threading.Lock</code> is safe to acquire from async code for these fast writes — no async boundary is crossed and no other lock is held at these points, so there is no deadlock risk.
+      </div>
+    </div>
+
+    <!-- ISSUE 2 -->
+    <div class="section" id="issue-2">
+      <h2>Issue 2 — repack dry-run Provider Not Connected <span class="badge badge-false" style="vertical-align:middle;margin-left:8px;">False Positive</span></h2>
+      <p><strong>File:</strong> <code>chunkhound/api/cli/commands/repack.py</code> &nbsp;·&nbsp; lines 64–109</p>
+
+      <h3>Reviewer's Claim</h3>
+      <p>The reviewer claimed <code>configure_registry(config)</code> does not call <code>provider.connect()</code>, so <code>get_storage_stats()</code> on line 69 would fail on an unconnected provider.</p>
+
+      <h3>Investigation Result: No Bug</h3>
+      <p>Tracing the call chain:</p>
+      <ol style="margin-left:20px;margin-top:8px;">
+        <li><code>configure_registry(config)</code> → <code>ProviderRegistry.configure()</code></li>
+        <li><code>configure()</code> → <code>_setup_database_provider()</code></li>
+        <li><code>_setup_database_provider()</code> explicitly calls <strong><code>provider.connect()</code> at registry line 321</strong> before registering</li>
+        <li><code>get_provider("database")</code> at line 67 returns the already-connected singleton</li>
+      </ol>
+
+      <div class="callout callout-success">
+        The dry-run path is correctly connected. The existing <code>test_repack_dry_run</code> test passes. <strong>No fix needed.</strong>
+      </div>
+    </div>
+
+    <!-- ISSUE 3 -->
+    <div class="section" id="issue-3">
+      <h2>Issue 3 — <code>_post_compaction_reindex</code> Loses Deferred Work on Restore Failure <span class="badge badge-important" style="vertical-align:middle;margin-left:8px;">Important</span></h2>
+      <p><strong>File:</strong> <code>chunkhound/mcp_server/base.py</code> &nbsp;·&nbsp; lines 1370–1424</p>
+
+      <h3>Problem</h3>
+      <p>Inside the <code>except Exception as e:</code> block, three <code>restore_*</code> calls execute before <code>_mark_background_compaction_failure</code>. If any restore call raises (e.g., database temporarily unavailable), the failure marker is <strong>never set</strong>. <code>pending_recovery</code> stays <code>False</code>, <code>_attempt_post_compaction_recovery</code> sees no retry needed, and all deferred work is silently lost.</p>
+
+      <div class="callout callout-danger">
+        <strong>Data-loss scenario:</strong> Compaction succeeds → reindex fails → except block enters → <code>restore_compaction_deferred_directories()</code> raises → <code>_mark_background_compaction_failure(pending_recovery=True)</code> is skipped → <code>ensure_services()</code> never raises <code>CompactionError</code> → deferred files are gone with no indication of failure.
+      </div>
+
+      <h3>Fix — wrap restore calls in inner try/except</h3>
+      <pre><code>            # BEFORE (lines 1402-1418):
+            if retryable_directories:
+                await self.realtime_indexing.restore_compaction_deferred_directories(
+                    retryable_directories
+                )
+            if restore_files:
+                await self.realtime_indexing.restore_compaction_deferred_files(
+                    restore_files
+                )
+            if retryable_removals:
+                await self.realtime_indexing.restore_compaction_deferred_removals(
+                    retryable_removals
+                )
+            self._mark_background_compaction_failure(
+                e, pending_recovery=True, retry_attempted=is_recovery_retry,
+            )
+
+            # AFTER:
+            try:
+                if retryable_directories:
+                    await self.realtime_indexing.restore_compaction_deferred_directories(
+                        retryable_directories
+                    )
+                if restore_files:
+                    await self.realtime_indexing.restore_compaction_deferred_files(
+                        restore_files
+                    )
+                if retryable_removals:
+                    await self.realtime_indexing.restore_compaction_deferred_removals(
+                        retryable_removals
+                    )
+            except Exception as restore_exc:
+                failure_detail += f"; restore also failed: {restore_exc}"
+            # _mark_background_compaction_failure NOW ALWAYS RUNS:
+            self._mark_background_compaction_failure(
+                e, pending_recovery=True, retry_attempted=is_recovery_retry,
+            )</code></pre>
+
+      <div class="callout callout-info">
+        The final <code>raise</code> at line 1424 re-raises the original exception <code>e</code> — Python's <code>raise</code> inside <code>except Exception as e:</code> always re-raises the bound exception, not any exception from the inner try.
+      </div>
+    </div>
+
+    <!-- ISSUE 4 -->
+    <div class="section" id="issue-4">
+      <h2>Issue 4 — <code>_attempt_post_compaction_recovery</code> Swallows Exceptions <span class="badge badge-important" style="vertical-align:middle;margin-left:8px;">Important</span></h2>
+      <p><strong>File:</strong> <code>chunkhound/mcp_server/base.py</code> &nbsp;·&nbsp; lines 1220–1221</p>
+
+      <h3>Problem</h3>
+      <p>The bare <code>except Exception: pass</code> relies on the assumption that <code>_post_compaction_reindex</code>'s except handler <em>always</em> calls <code>_mark_background_compaction_failure</code>. Before Issue 3 is fixed, that assumption is false — a raise from <code>restore_*</code> escapes the inner handler. After Issue 3 is fixed, the assumption holds.</p>
+
+      <h3>Fix — comment update only (after Issue 3)</h3>
+      <pre><code>        except Exception:
+            pass  # _post_compaction_reindex's except handler always calls
+                  # _mark_background_compaction_failure, even if restore_* raises</code></pre>
+
+      <div class="callout callout-warn">
+        <strong>Dependency:</strong> This comment must land after Issue 3's fix. The invariant it describes is only true once the inner try/except wraps the restore calls.
+      </div>
+    </div>
+
+    <!-- ISSUE 5 -->
+    <div class="section" id="issue-5">
+      <h2>Issue 5 — Connection Gate Opens Before Reconnect Completes <span class="badge badge-important" style="vertical-align:middle;margin-left:8px;">Important</span></h2>
+      <p><strong>File:</strong> <code>chunkhound/providers/database/duckdb_provider.py</code> &nbsp;·&nbsp; lines 4400–4410</p>
+
+      <h3>Problem</h3>
+      <p><code>_restore_connection_after_compaction</code> opens the connection gate (<code>_connection_allowed.set()</code>) <em>before</em> calling <code>connect()</code>. If <code>connect()</code> raises — particularly in the error-recovery path after a failed swap — the gate is permanently open with no working connection. Concurrent MCP requests pass the gate check (<code>is_accepting_connections</code>) but hit a dead or inconsistent database.</p>
+
+      <pre><code># CURRENT (broken order):
+def _restore_connection_after_compaction(self) -> None:
+    if self.terminal_after_stuck_cleanup:
+        raise CompactionError(...)
+    self._connection_allowed.set()   # gate OPENS  ← line 4409
+    self.connect()                   # connect (can raise!)  ← line 4410
+    # If connect() raises here: gate is open, connection is broken</code></pre>
+
+      <div class="callout callout-danger">
+        The <code>finally</code> block at lines 4397–4398 only <em>sets</em> the gate if <code>is_connected</code> — it never <em>clears</em> a gate that was prematurely opened. Once <code>set()</code> is called, there is no recovery path that closes it back.
+      </div>
+
+      <h3>Fix — connect first, then open gate</h3>
+      <pre><code>def _restore_connection_after_compaction(self) -> None:
+    """Reconnect after compaction unless cleanup has made the provider terminal.
+
+    connect() is called before opening the gate so that if connect() raises,
+    the gate stays closed — concurrent requests will receive CompactionError
+    rather than hitting a broken provider with an open gate.
+    """
+    if self.terminal_after_stuck_cleanup:
+        raise CompactionError(
+            "Compaction cannot restore the database connection after terminal "
+            "stuck-cleanup state",
+            operation="compaction",
+            recoverable=False,
+        )
+    self.connect()                   # connect first — gate stays closed if this raises
+    self._connection_allowed.set()   # only open gate after successful connect</code></pre>
+
+      <div class="callout callout-info">
+        The <code>finally</code> block's <code>if self.is_connected: self._connection_allowed.set()</code> is idempotent on double-set — calling <code>threading.Event.set()</code> twice is a no-op. No regression risk from the safety net.
+      </div>
+    </div>
+
+    <!-- ISSUE 6 -->
+    <div class="section" id="issue-6">
+      <h2>Issue 6 — <code>chunkhound_native</code> Hard Import Fails If Rust Not Built <span class="badge badge-important" style="vertical-align:middle;margin-left:8px;">Important</span></h2>
+      <p><strong>File:</strong> <code>chunkhound_native/__init__.py</code> &nbsp;·&nbsp; line 1</p>
+
+      <h3>Problem</h3>
+      <p>The bare <code>from .chunkhound_native import scan_files</code> raises a raw <code>ImportError</code> with a confusing internal module path if the Rust extension (<code>.so</code>/<code>.pyd</code>) was not compiled. Any <code>import chunkhound_native</code> anywhere in the codebase (or user environment) will fail hard with no guidance on how to fix it.</p>
+
+      <h3>Fix — actionable error on missing extension</h3>
+      <pre><code>try:
+    from .chunkhound_native import scan_files
+except ImportError as e:
+    raise RuntimeError(
+        "chunkhound_native extension not built. "
+        "Run: maturin develop  "
+        "(or install a wheel that includes the native extension)"
+    ) from e</code></pre>
+    </div>
+
+    <!-- ISSUE 7 -->
+    <div class="section" id="issue-7">
+      <h2>Issue 7 — <code>compaction_comparison_report.html</code> Tracked in Git <span class="badge badge-minor" style="vertical-align:middle;margin-left:8px;">Minor</span></h2>
+      <p><strong>Files:</strong> <code>.gitignore</code>, then <code>git rm --cached</code></p>
+
+      <h3>Verification</h3>
+      <pre><code>$ git ls-files compaction_comparison_report.html
+compaction_comparison_report.html   # confirmed tracked</code></pre>
+
+      <h3>Fix — two steps</h3>
+      <p><strong>Step 1:</strong> Append to <code>.gitignore</code> under the existing "AI review artifacts" section (around line 338):</p>
+      <pre><code>compaction_comparison_report.html</code></pre>
+
+      <p><strong>Step 2:</strong> Untrack the file without deleting it locally:</p>
+      <pre><code>git rm --cached compaction_comparison_report.html</code></pre>
+
+      <div class="callout callout-info">
+        Stage both the <code>.gitignore</code> change and the <code>git rm --cached</code> removal in the same commit — they naturally appear together in <code>git status</code>.
+      </div>
+    </div>
+
+    <!-- FIX ORDER -->
+    <div class="section" id="order">
+      <h2>Fix Order &amp; Dependencies</h2>
+      <p>Issues 1, 5, 6, 7 are fully independent. Issue 3 must land before Issue 4.</p>
+
+      <div style="margin: 16px 0 8px; font-size:13px; color:#6c7086;">
+        Dependency chain: <code style="color:#1e1e2e;">Issue 3</code> <span class="dep-arrow">→</span> <code style="color:#1e1e2e;">Issue 4 comment</code>
+      </div>
+
+      <div style="margin-top:16px;">
+        <div class="commit-step">
+          <div class="commit-num">1</div>
+          <div class="commit-text">
+            <strong>Issues 3 + 4 — <code>mcp_server/base.py</code></strong>
+            <span>Wrap restore_* calls in inner try/except; update comment in _attempt_post_compaction_recovery</span>
+          </div>
+        </div>
+        <div class="commit-step">
+          <div class="commit-num">2</div>
+          <div class="commit-text">
+            <strong>Issue 5 — <code>duckdb_provider.py</code></strong>
+            <span>Swap connect/set order in _restore_connection_after_compaction</span>
+          </div>
+        </div>
+        <div class="commit-step">
+          <div class="commit-num">3</div>
+          <div class="commit-text">
+            <strong>Issue 1 — <code>compaction_service.py</code></strong>
+            <span>Add lock protection to all 5 _last_error read/write sites</span>
+          </div>
+        </div>
+        <div class="commit-step" style="border-bottom:none;">
+          <div class="commit-num">4</div>
+          <div class="commit-text">
+            <strong>Issues 6 + 7 — housekeeping</strong>
+            <span>chunkhound_native ImportError wrapper + gitignore + git rm --cached</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VERIFICATION -->
+    <div class="section" id="verification">
+      <h2>Verification</h2>
+
+      <h3>After each fix — smoke test</h3>
+      <pre><code>uv run pytest tests/test_smoke.py -v -n auto</code></pre>
+
+      <h3>After all fixes — full suite</h3>
+      <pre><code>uv run pytest tests/ -v 2>&1 | tail -40</code></pre>
+
+      <h3>Spot checks</h3>
+      <pre><code># Issue 1 — confirm all _last_error writes are behind the lock
+grep -n "with self._lock" chunkhound/services/compaction_service.py
+
+# Issue 5 — confirm connect before set
+grep -A 5 "def _restore_connection_after_compaction" \
+  chunkhound/providers/database/duckdb_provider.py
+
+# Issue 7 — confirm untracked
+git ls-files compaction_comparison_report.html   # should be empty</code></pre>
+
+      <details>
+        <summary>Compaction-focused subset (faster iteration)</summary>
+        <pre><code>uv run pytest tests/ -k "compaction" -x -q
+uv run pytest tests/unit/test_compaction_service.py -v
+uv run pytest tests/unit/test_post_compaction_reindex.py -v
+uv run pytest tests/unit/test_connection_manager_recovery.py -v</code></pre>
+      </details>
+    </div>
+
+    <footer>ChunkHound Compaction — Code Review Findings &amp; Fix Plan &nbsp;·&nbsp; 2026-06-08</footer>
+  </div>
+</div>
+</body>
+</html>

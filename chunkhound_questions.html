@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound — Open Questions</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; min-height: 100vh; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 24px 48px; border-bottom: 3px solid #f38ba8; }
+    header h1 { font-size: 22px; font-weight: 700; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    .container { max-width: 860px; margin: 0 auto; padding: 36px 48px; }
+
+    .q-card { background: #fff; border-radius: 8px; border: 1px solid #e0e0e0; margin-bottom: 32px; overflow: hidden; }
+    .q-header { display: flex; align-items: flex-start; gap: 16px; padding: 20px 24px 16px; border-bottom: 1px solid #f0f0f0; }
+    .q-num { background: #f38ba8; color: #1e1e2e; font-size: 13px; font-weight: 800; border-radius: 4px; padding: 4px 10px; white-space: nowrap; flex-shrink: 0; margin-top: 2px; }
+    .q-title { font-size: 16px; font-weight: 700; color: #1e1e2e; line-height: 1.4; }
+    .q-tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-top: 6px; margin-right: 4px; }
+    .tag-db { background: #dbeafe; color: #1d4ed8; }
+    .tag-design { background: #ede9fe; color: #6d28d9; }
+    .tag-open { background: #fef3c7; color: #92400e; }
+    .tag-answered { background: #d1fae5; color: #065f46; }
+
+    .q-body { padding: 20px 24px; }
+    .q-observation { background: #fefce8; border-left: 4px solid #eab308; padding: 14px 16px; border-radius: 0 6px 6px 0; margin-bottom: 20px; font-size: 13.5px; line-height: 1.7; color: #555; }
+    .q-observation strong { color: #333; }
+
+    .answer-block { margin-top: 4px; }
+    .answer-block h3 { font-size: 13px; font-weight: 700; color: #6d28d9; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+    .answer-block h3::before { content: '↳'; font-size: 15px; }
+
+    .finding { margin-bottom: 16px; }
+    .finding h4 { font-size: 13.5px; font-weight: 700; color: #1e1e2e; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+    .finding h4::before { content: '▸'; color: #89b4fa; }
+    .finding p, .finding li { font-size: 13.5px; line-height: 1.75; color: #444; }
+    .finding ul { padding-left: 20px; margin-top: 6px; }
+    .finding li { margin-bottom: 4px; }
+
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 14px 16px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 10px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.6; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 12.5px; }
+    pre code { background: none; color: inherit; padding: 0; }
+
+    .callout { padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 13px; line-height: 1.65; }
+    .callout-blue  { background: #eff6ff; border-left: 4px solid #89b4fa; color: #1e40af; }
+    .callout-green { background: #f0fdf4; border-left: 4px solid #4ade80; color: #14532d; }
+    .callout-amber { background: #fffbeb; border-left: 4px solid #f59e0b; color: #78350f; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 9px 12px; text-align: left; font-size: 12px; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    td code { font-size: 11.5px; }
+
+    .verdict { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 14px 18px; margin-top: 16px; }
+    .verdict strong { color: #065f46; font-size: 13.5px; }
+    .verdict p { font-size: 13px; color: #166534; margin-top: 6px; line-height: 1.65; }
+
+    .add-q { background: #fff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 24px; text-align: center; color: #94a3b8; font-size: 14px; margin-bottom: 32px; }
+    .add-q span { font-size: 22px; display: block; margin-bottom: 8px; }
+
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0 36px; border-top: 1px solid #e0e0e0; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ChunkHound — Open Questions &amp; Design Observations</h1>
+  <div class="meta">Living document — add questions as we read the code | Started: 2026-07-05</div>
+</header>
+
+<div class="container">
+
+  <!-- ── Q1 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q1</span>
+      <div>
+        <div class="q-title">Why is the embedding table named by dimension (<code>embeddings_1536</code>) AND also stores <code>provider</code>, <code>model</code>, and <code>dims</code> per row?</div>
+        <span class="q-tag tag-db">Database</span>
+        <span class="q-tag tag-design">Schema Design</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Observation:</strong> The embedding table is named <code>embeddings_1536</code> — the dimension is baked into the table name. Yet every single row also stores <code>provider</code>, <code>model</code>, and <code>dims</code> columns. This only makes sense if the table is intended to hold entries from <em>multiple</em> providers and models simultaneously — which feels unusual. A second observation: running ChunkHound with a different embedding model (e.g., 256-dim) causes the code to create a brand new table <code>embeddings_256</code> rather than adding to the existing one.
+      </div>
+
+      <div class="answer-block">
+        <h3>Research findings</h3>
+
+        <div class="finding">
+          <h4>Root cause: DuckDB's fixed-width typed array constraint</h4>
+          <p>DuckDB declares embedding columns as <code>FLOAT[1536]</code> — a fixed-width typed array. You <strong>cannot</strong> store a 1024-dim vector in a <code>FLOAT[1536]</code> column. There is no variable-length vector column type. This is why a new table must be created for each distinct dimensionality — it is a hard technical constraint, not a design choice.</p>
+          <pre><code>-- From duckdb/embedding_repository.py
+CREATE TABLE embeddings_{dims} (
+    ...
+    embedding  FLOAT[{dims}],        -- fixed width: 1536, 1024, 256, etc.
+    dims       INTEGER NOT NULL DEFAULT {dims},
+    ...
+)</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>Why <code>provider</code> and <code>model</code> columns exist inside the table</h4>
+          <p>Two providers could both produce 1536-dim vectors (e.g., OpenAI <code>text-embedding-3-small</code> = 1536 dims, and hypothetically another provider also at 1536 dims). They would share the same table. The <code>(provider, model)</code> columns distinguish whose embedding is whose.</p>
+          <p>The unique index enforces one embedding per <strong>chunk × provider × model</strong> combination — not just per chunk:</p>
+          <pre><code>CREATE UNIQUE INDEX idx_{dims}_chunk_provider_model_unique
+    ON embeddings_{dims}(chunk_id, provider, model);</code></pre>
+          <p>This means: one chunk can have <em>multiple rows</em> in <code>embeddings_1536</code> — one per provider/model pair. This enables multi-provider search without separate tables.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Why is <code>dims</code> stored as a column if it's already in the table name?</h4>
+          <p>The <code>dims</code> column is redundant by design — its value always equals the table name suffix. It exists as denormalized metadata for two reasons:</p>
+          <ul>
+            <li>Convenience: queries can read <code>dims</code> without parsing the table name string</li>
+            <li>Validation: code can assert <code>row.dims == expected_dims</code> as a sanity check</li>
+          </ul>
+          <p>There is a migration path that enforces uniqueness before adding the constraint, which implies earlier versions lacked the unique index and may have had inconsistent <code>dims</code> values.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Cross-table query behavior</h4>
+          <table>
+            <tr><th>Operation</th><th>Which tables?</th><th>Why</th></tr>
+            <tr>
+              <td>Semantic search</td>
+              <td>One table only — <code>embeddings_{query_dims}</code></td>
+              <td>Query vector has a fixed dim; only matching table can answer</td>
+            </tr>
+            <tr>
+              <td>Existence check (skip re-embed)</td>
+              <td>All tables scanned</td>
+              <td>Need to find if chunk was embedded by any provider/model</td>
+            </tr>
+            <tr>
+              <td>Get embedding by chunk id</td>
+              <td>All tables scanned</td>
+              <td>Chunk may be in any dimension table depending on when it was indexed</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="verdict">
+          <strong>Summary verdict</strong>
+          <p>The per-dimension table is <strong>forced by DuckDB</strong> (fixed-width array columns). The <code>provider</code>/<code>model</code> columns inside it exist to handle the edge case where two providers share the same output dimension. The <code>dims</code> column is redundant metadata. The design is technically correct but creates the impression of redundancy — the table name and the column both encode the same number.</p>
+        </div>
+
+        <div class="callout callout-amber" style="margin-top:16px;">
+          <strong>Follow-up to explore:</strong> In practice, do any two configured providers actually share a dimension (making the per-row provider/model columns load-bearing)? Or is it always one provider per dimension table, making the multi-provider-per-table case theoretical?
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q1 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q2 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q2</span>
+      <div>
+        <div class="q-title">What is the HNSW algorithm and why does ChunkHound use it for vector search?</div>
+        <span class="q-tag tag-db">Database</span>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> ChunkHound creates an <code>HNSW</code> index on the embedding column with <code>metric = 'cosine'</code>. What is the HNSW algorithm, how does it work, and why is it used here instead of a plain SQL scan?
+      </div>
+
+      <div class="answer-block">
+        <h3>Explanation</h3>
+
+        <div class="finding">
+          <h4>The problem: nearest-neighbor search in high-dimensional space</h4>
+          <p>When you search ChunkHound with a query, that query is turned into a vector (e.g., 1536 numbers). You then need to find the stored chunks whose vectors are most <em>similar</em> to the query vector. The naive approach — compare the query to every single stored vector — is called a <strong>brute-force scan</strong>. It is O(N × D): every row, every dimension. At 1 million chunks × 1536 dims, that is 1.5 billion float comparisons per query. Too slow.</p>
+          <p>HNSW solves this with an index structure that reduces query time to approximately <strong>O(log N)</strong>.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Step 1 — Small World graphs</h4>
+          <p>Imagine each vector is a node in a graph. Each node is connected by edges to its <em>K</em> nearest neighbors. To find the nearest neighbor of a query, you start at any entry node and <strong>greedily hop</strong> to whichever connected neighbor is closest to the query — repeat until no neighbor is closer than the current node. This is called a <strong>Navigable Small World (NSW)</strong> graph.</p>
+          <p>The key property: in a well-constructed small world graph, you reach the nearest neighbor in very few hops — similar to the "6 degrees of separation" idea in social networks.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Step 2 — The Hierarchy (the H in HNSW)</h4>
+          <p>NSW alone has a problem: greedy traversal can get stuck in dense local clusters and take many hops. HNSW fixes this by adding <strong>multiple layers</strong>, like a skip list:</p>
+          <pre><code>Layer 2 (top):   very few nodes,  very long-range edges  → fast coarse navigation
+Layer 1:         more nodes,      medium-range edges
+Layer 0 (bottom): ALL nodes,      short-range edges       → precise fine search
+
+Search:  enter at top → greedily descend layer by layer → bottom layer gives final result</code></pre>
+          <p>The higher layers let the search "teleport" across the space quickly. Lower layers refine the result locally. This is why query time is O(log N) — the hierarchy prunes the search space exponentially at each level.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Cosine similarity — what metric ChunkHound uses</h4>
+          <p>The index is built with <code>metric = 'cosine'</code>. Cosine similarity measures the <strong>angle</strong> between two vectors, not their distance:</p>
+          <pre><code>cosine_similarity(A, B) = (A · B) / (|A| × |B|)
+-- Result: 1.0 = identical direction (most similar)
+--         0.0 = perpendicular (unrelated)
+--        -1.0 = opposite directions
+
+-- DuckDB's array_distance() returns 1 - similarity (lower = closer):
+ORDER BY array_distance(e.embedding, query_vector)  -- ascending = most similar first</code></pre>
+          <p>Cosine is preferred over Euclidean distance for semantic embeddings because it captures <em>meaning direction</em> regardless of vector magnitude. Two chunks about the same concept will point in the same direction even if their vectors have different lengths.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Approximate — the tradeoff</h4>
+          <p>HNSW is an <strong>Approximate Nearest Neighbor (ANN)</strong> algorithm. It does not guarantee finding the single mathematically closest vector every time. In exchange it is orders of magnitude faster. In practice, recall is typically 95–99%+ — the few missed results are very close in similarity to the true nearest neighbor and would not meaningfully change the search output.</p>
+          <table>
+            <tr><th>Method</th><th>Query time</th><th>Accuracy</th><th>Memory</th></tr>
+            <tr><td>Brute-force scan</td><td>O(N × D)</td><td>100% exact</td><td>O(N × D)</td></tr>
+            <tr><td>HNSW</td><td>O(log N)</td><td>~95–99%</td><td>O(N × M) — M = edges/node</td></tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>Why ChunkHound drops and recreates the HNSW index during bulk inserts</h4>
+          <p>Building the HNSW graph requires connecting each new node to its neighbors — an expensive operation per insert. When inserting more than ~50 embeddings at once, ChunkHound <strong>drops the index, bulk-inserts all rows, then rebuilds the index in one pass</strong>. Rebuilding from scratch once is 10–20× faster than incrementally adding 1000 nodes one by one.</p>
+          <pre><code>-- Before bulk insert
+DROP INDEX IF EXISTS idx_hnsw_1536;
+
+-- ... INSERT 1000 rows ...
+
+-- After bulk insert — rebuild in one pass
+CREATE INDEX idx_hnsw_1536
+    ON embeddings_1536 USING HNSW (embedding)
+    WITH (metric = 'cosine');</code></pre>
+        </div>
+
+        <div class="verdict">
+          <strong>One-line summary</strong>
+          <p>HNSW is a multi-layer graph index that lets ChunkHound find semantically similar code chunks in O(log N) time instead of scanning every row. It trades a small amount of recall accuracy (~1–5%) for query speeds that scale to millions of chunks. The cosine metric means "most similar meaning," not "closest in Euclidean space."</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q2 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q3 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q3</span>
+      <div>
+        <div class="q-title">What is <code>LIKE</code> in a SQL query?</div>
+        <span class="q-tag tag-db">Database</span>
+        <span class="q-tag tag-design">SQL Basics</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> The ChunkHound regex/text search uses <code>LIKE</code> in its SQL queries. What does <code>LIKE</code> do, and how is it different from semantic (vector) search?
+      </div>
+
+      <div class="answer-block">
+        <h3>Explanation</h3>
+
+        <div class="finding">
+          <h4>What LIKE does</h4>
+          <p><code>LIKE</code> is a SQL pattern-matching operator. It checks whether a text column matches a pattern string. Two wildcard characters control the match:</p>
+          <table>
+            <tr><th>Wildcard</th><th>Meaning</th><th>Example</th></tr>
+            <tr><td><code>%</code></td><td>Zero or more of any character</td><td><code>'%search%'</code> matches anything containing "search"</td></tr>
+            <tr><td><code>_</code></td><td>Exactly one of any character</td><td><code>'get_'</code> matches "get_" followed by any single char</td></tr>
+          </table>
+          <pre><code>-- Find all chunks whose code contains the word "search"
+SELECT * FROM chunks WHERE code LIKE '%search%';
+
+-- Find all chunks whose symbol starts with "get_"
+SELECT * FROM chunks WHERE symbol LIKE 'get_%';
+
+-- Find file paths ending in .py
+SELECT * FROM files WHERE path LIKE '%.py';</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>How ChunkHound uses it</h4>
+          <p>The regex search mode in ChunkHound wraps your query in <code>%…%</code> and runs a <code>LIKE</code> scan on the <code>chunks.code</code> column — essentially "find all chunks whose source text contains this string":</p>
+          <pre><code>-- ChunkHound regex search (simplified)
+SELECT c.id, c.symbol, c.code, c.start_line, f.path
+FROM chunks c
+JOIN files f ON c.file_id = f.id
+WHERE c.code LIKE '%def search%'   -- user typed: def search
+  AND f.path LIKE '%services%'     -- optional path filter
+ORDER BY f.path, c.start_line
+LIMIT 50;</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>LIKE vs. semantic (vector) search — the key difference</h4>
+          <table>
+            <tr><th></th><th>LIKE</th><th>Vector / HNSW</th></tr>
+            <tr><td><strong>Matches</strong></td><td>Exact characters in the text</td><td>Meaning / concept</td></tr>
+            <tr><td><strong>Example query</strong></td><td><code>%IndexingCoordinator%</code></td><td>"how does indexing work"</td></tr>
+            <tr><td><strong>Misses</strong></td><td>Synonyms, different spelling, paraphrases</td><td>Exact symbol names</td></tr>
+            <tr><td><strong>Needs embeddings?</strong></td><td>No — works offline</td><td>Yes — requires API call</td></tr>
+            <tr><td><strong>Speed</strong></td><td>Sequential table scan — O(N)</td><td>HNSW graph — O(log N)</td></tr>
+            <tr><td><strong>Use when</strong></td><td>You know the exact name/string</td><td>You know the concept, not the name</td></tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>Important: LIKE is case-sensitive in DuckDB</h4>
+          <p>In DuckDB (and most SQL databases), <code>LIKE</code> is case-sensitive by default. <code>'%Search%'</code> will <strong>not</strong> match <code>"def search"</code>. To match case-insensitively use <code>ILIKE</code>:</p>
+          <pre><code>WHERE code ILIKE '%search%'   -- matches Search, SEARCH, search, etc.</code></pre>
+        </div>
+
+        <div class="verdict">
+          <strong>One-line summary</strong>
+          <p><code>LIKE</code> is SQL's text pattern matcher — <code>%</code> is a wildcard for "anything". It does a literal string search through every row (no index), which is why it's used for ChunkHound's offline/regex mode and semantic vector search is preferred for large codebases.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q3 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q4 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q4</span>
+      <div>
+        <div class="q-title">What is the CAST algorithm and how does ChunkHound use it?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-design">Parsing</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> The learning guide mentions "CAST algorithm" in the parsers section. What does it stand for, what problem does it solve, and how does it work step by step?
+      </div>
+
+      <div class="answer-block">
+        <h3>Explanation</h3>
+
+        <div class="finding">
+          <h4>What CAST stands for</h4>
+          <p><strong>cAST</strong> = <strong>Code Abstract Syntax Tree</strong>. It is named after a research paper: <em>"cAST: Enhancing Code Retrieval-Augmented Generation with Structural Chunking via Abstract Syntax Tree"</em>. ChunkHound implements a simplified, production-adapted version of that paper's ideas.</p>
+          <p>The core problem it solves: <strong>how do you split a source file into chunks that are useful for vector search?</strong> If you split naively by line count or character count, you break functions in half and destroy semantic meaning. CAST splits along the natural boundaries of the code's syntax tree instead.</p>
+        </div>
+
+        <div class="finding">
+          <h4>The pipeline: from file to Chunk objects</h4>
+          <pre><code>Source file (.py, .ts, .go …)
+    │
+    ▼ tree-sitter
+AST (Abstract Syntax Tree) — language-specific parse tree
+    │
+    ▼ ConceptExtractor  (universal_engine.py)
+UniversalChunk list  — language-agnostic semantic units
+    │
+    ▼ cAST algorithm  (chunk_splitter.py + universal_parser.py)
+Optimised UniversalChunk list  — right-sized, non-overlapping
+    │
+    ▼ universal_to_chunk()
+Chunk objects  — stored in DB, embedded, searched</code></pre>
+          <p>Tree-sitter builds the parse tree. The CAST algorithm then decides how to group and size the semantic nodes into chunks that fit the embedding model's token limit.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Key size parameters (CASTConfig)</h4>
+          <pre><code>@dataclass
+class CASTConfig:
+    max_chunk_size:   int   = 1200   # non-whitespace chars — primary size limit
+    min_chunk_size:   int   = 50     # avoid tiny fragments
+    merge_threshold:  float = 0.8    # merge siblings if combined &lt; 80% of max
+    greedy_merge:     bool  = True   # merge adjacent sibling nodes
+    safe_token_limit: int   = 6000   # safety cap for embedding model</code></pre>
+          <p>Size is measured in <strong>non-whitespace characters</strong> (spaces/tabs/newlines stripped out) — not raw characters, not lines. This is what "codepoint-aware" means: the metric fairly represents actual content regardless of indentation style.</p>
+        </div>
+
+        <div class="finding">
+          <h4>The 5-phase algorithm</h4>
+          <table>
+            <tr><th>#</th><th>Phase</th><th>What happens</th></tr>
+            <tr>
+              <td>1</td>
+              <td>Deduplication</td>
+              <td>Remove any UniversalChunks with identical content before processing</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Concept grouping</td>
+              <td>Group chunks by semantic type: DEFINITION (functions/classes), BLOCK (code blocks), COMMENT</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Concept-specific strategy</td>
+              <td>DEFINITION chunks stay whole; BLOCK chunks merge aggressively; COMMENT chunks merge only if adjacent</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>Recursive splitting</td>
+              <td>Any chunk still over <code>max_chunk_size</code> (1200 chars) or <code>safe_token_limit</code> (6000 tokens) is split by lines, or by emergency byte-split for minified code</td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td>Greedy merge pass</td>
+              <td>Final pass: adjacent compatible chunks are merged if the combined result still fits — maximises information density per chunk</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>How nesting is handled (class + methods)</h4>
+          <p>The merge pass explicitly detects when one chunk is <em>nested inside</em> another (its line range is fully contained) and refuses to merge them. A class body and its methods stay as separate chunks:</p>
+          <pre><code>-- Example: MyClass spans lines 10-50
+-- method1() spans lines 15-20  →  nested, NOT merged into class chunk
+
+is_nested = (
+    next_chunk.start_line &gt; current_chunk.start_line
+    and next_chunk.end_line &lt;= current_chunk.end_line
+)
+if is_nested:
+    keep_separate()   # methods stay independent — searchable on their own</code></pre>
+          <p>This is important for search quality: a query about a specific method finds <em>that method's chunk</em>, not the entire class file.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Why this matters for vector search</h4>
+          <p>The quality of semantic search depends directly on chunk quality. If a chunk contains one tiny 3-line helper and a completely unrelated 50-line function, the embedding will be a confused average of both — searches for either concept will score lower. CAST's goals:</p>
+          <ul>
+            <li><strong>Preserve syntactic integrity</strong> — never cut a function in the middle</li>
+            <li><strong>Maximise information density</strong> — fill each chunk to ~1200 chars so embeddings are rich</li>
+            <li><strong>Language invariance</strong> — same algorithm works for Python, TypeScript, Go, etc. because tree-sitter normalises the AST</li>
+            <li><strong>Fit token limits</strong> — embedding APIs refuse inputs over ~8192 tokens; 6000 is the safe cap</li>
+          </ul>
+        </div>
+
+        <div class="verdict">
+          <strong>One-line summary</strong>
+          <p>CAST uses tree-sitter's parse tree to split code at natural semantic boundaries (function end, class end), then greedily merges small adjacent chunks to maximize embedding richness, never crossing the embedding model's token limit. The result is chunks that are both <em>semantically coherent</em> and <em>right-sized for vector search</em>.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q4 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q5 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q5</span>
+      <div>
+        <div class="q-title">What is multi-hop search and how does ChunkHound implement it?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Search</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> The learning guide mentions "multi-hop search" and "single-hop search" as two different search strategies. What does "hop" mean here, how does multi-hop differ from single-hop, and when is each used?
+      </div>
+
+      <div class="answer-block">
+        <h3>Explanation</h3>
+
+        <div class="finding">
+          <h4>The core idea</h4>
+          <p>A <strong>single-hop search</strong> does exactly one thing: embed the query → run HNSW vector search → return top-K results. Fast, simple, one round trip.</p>
+          <p>A <strong>multi-hop search</strong> treats those initial results as a <em>starting point</em> and then <strong>expands outward</strong> — finding neighbors of the top results, reranking everything together, then expanding again — until the results stop improving. Each expansion round is a "hop."</p>
+          <p>The analogy: single-hop is looking up one page in a book. Multi-hop is reading that page, then following the footnotes, then following those footnotes, stopping when you're no longer finding anything new.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Single-hop flow (always available)</h4>
+          <pre><code>Query string
+  │
+  ▼ embed (1 API call)
+Query vector
+  │
+  ▼ HNSW cosine search (1 DB query)
+Top-K chunks ranked by vector similarity
+  │
+  ▼ return</code></pre>
+          <p>Cost: 1 embedding call + 1 DB query. Used when the provider does not support reranking (e.g. OpenAI embeddings only).</p>
+        </div>
+
+        <div class="finding">
+          <h4>Multi-hop flow (requires reranking provider — e.g. VoyageAI)</h4>
+          <pre><code>Query string
+  │
+  ▼ 1. Initial search — HNSW returns ~300 candidates
+  │
+  ▼ 2. Rerank all 300 via VoyageAI rerank-2
+  │       scores updated — top-5 identified
+  │
+  ▼ 3. Expand — find 20 vector-neighbors of each top-5 chunk
+  │       ~100 new candidates added to the pool
+  │
+  ▼ 4. Rerank entire pool (300 + 100 = 400 docs) — scores updated again
+  │
+  ▼ 5. Check termination — if still improving, go to step 3 with new top-5
+  │
+  ▼ 6. When terminated — paginate final ranked pool, return top-K</code></pre>
+          <p>Each iteration of steps 3–5 is one "hop." The pool grows, gets reranked, and either expands again or stops.</p>
+        </div>
+
+        <div class="finding">
+          <h4>What reranking adds (and why it matters)</h4>
+          <p>HNSW finds chunks that are <em>close in vector space</em>. That is a proxy for relevance — good, but imperfect. A reranker (VoyageAI <code>rerank-2</code>) is a separate model trained specifically to score document–query relevance. It sees both the query text and the chunk text together and outputs a richer relevance score.</p>
+          <p>Result: chunks that were ranked #8 by HNSW similarity might jump to #1 after reranking because the reranker understands the query intent better. Multi-hop iteratively applies this to an expanding pool, so progressively better candidates surface.</p>
+        </div>
+
+        <div class="finding">
+          <h4>The 5 termination conditions</h4>
+          <table>
+            <tr><th>#</th><th>Condition</th><th>Default threshold</th></tr>
+            <tr><td>1</td><td>Time limit exceeded</td><td>5 seconds (normal) / 600s (exhaustive mode)</td></tr>
+            <tr><td>2</td><td>Result cap reached</td><td>500 chunks accumulated</td></tr>
+            <tr><td>3</td><td>Not enough quality candidates to expand from</td><td>Need 5+ chunks with score &gt; 0.0</td></tr>
+            <tr><td>4</td><td>Score degradation — a top chunk's score dropped</td><td>Drop ≥ 0.15 from previous round</td></tr>
+            <tr><td>5</td><td>Minimum relevance too low</td><td>Top-5 minimum score &lt; 0.3</td></tr>
+          </table>
+          <p>Conditions 4 and 5 detect "diminishing returns" — the expansion is no longer surfacing better results, so it's not worth continuing.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Strategy selection — automatic</h4>
+          <pre><code>-- search_service.py auto-selects based on provider capability:
+
+if provider.supports_reranking():
+    use MultiHopStrategy    # VoyageAI → multi-hop
+else:
+    use SingleHopStrategy   # OpenAI embeddings only → single-hop
+
+-- Can be overridden:
+force_strategy = "multi_hop"   # force multi-hop
+force_strategy = "single_hop"  # force single-hop</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>Single-hop vs multi-hop at a glance</h4>
+          <table>
+            <tr><th></th><th>Single-hop</th><th>Multi-hop</th></tr>
+            <tr><td><strong>API calls</strong></td><td>1 embed</td><td>1 embed + 1–5 rerank calls (100–500 docs each)</td></tr>
+            <tr><td><strong>DB queries</strong></td><td>1 HNSW search</td><td>1 HNSW + N neighbor lookups per round</td></tr>
+            <tr><td><strong>Latency</strong></td><td>~100ms</td><td>1–5 seconds</td></tr>
+            <tr><td><strong>Best for</strong></td><td>Simple lookups, known symbol names</td><td>Complex questions, exploring a concept across files</td></tr>
+            <tr><td><strong>Requires</strong></td><td>Any embedding provider</td><td>Provider with reranking (VoyageAI)</td></tr>
+            <tr><td><strong>Result quality</strong></td><td>Good</td><td>Better — reranker understands query intent</td></tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>ContextRetriever — the companion utility</h4>
+          <p>Not part of the hop loop itself, but used alongside it. Given a <code>chunk_id</code>, it fetches the <em>surrounding chunks</em> (the N lines before and after) from the same file. This gives the caller a window of code context around each result — useful when the AI assistant needs to understand what comes before/after a match.</p>
+          <pre><code>-- Overlap query: find all chunks that touch lines (start-5) to (end+5)
+SELECT symbol, start_line, end_line, code, chunk_type
+FROM chunks
+WHERE file_id = ?
+  AND (start_line BETWEEN ? AND ? OR end_line BETWEEN ? AND ?
+       OR start_line &lt;= ? AND end_line &gt;= ?)
+ORDER BY start_line;</code></pre>
+        </div>
+
+        <div class="verdict">
+          <strong>One-line summary</strong>
+          <p>Multi-hop search starts with a normal HNSW vector search, then iteratively finds neighbors of the best results and reranks the growing pool — stopping when relevance stops improving. It trades latency (1–5 seconds vs ~100ms) for significantly better result quality on complex queries, and only activates when the embedding provider supports reranking.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q5 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q6 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q6</span>
+      <div>
+        <div class="q-title">Multi-hop reranking: why rerank at all if we have cosine similarity, and why re-score the original 300 in round 2?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Search</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Two questions:</strong>
+        <ol style="margin-top:8px; padding-left:20px;">
+          <li style="margin-bottom:6px;">We already have cosine similarity scores from HNSW. Why do we need to rerank the initial 300 results at all?</li>
+          <li>In round 2 we expand to 400 chunks (300 original + 100 new). Why do we rerank all 400 instead of just scoring the 100 new ones?</li>
+        </ol>
+      </div>
+
+      <div class="answer-block">
+        <h3>Question 1 — Cosine similarity vs reranking: two different signals</h3>
+
+        <div class="finding">
+          <h4>What cosine similarity actually measures</h4>
+          <p>When HNSW returns the top-300, each chunk's score is the cosine similarity between the <strong>query embedding</strong> and the <strong>chunk embedding</strong>. Both were embedded <em>independently</em> — the query was embedded alone, then compared to chunk vectors that were embedded weeks ago during indexing. The similarity is inferred from their positions in the same vector space.</p>
+          <p>This is an <strong>indirect proxy</strong> for relevance. It answers: <em>"do these two vectors point in a similar direction?"</em> — not <em>"does this chunk actually answer the question?"</em></p>
+        </div>
+
+        <div class="finding">
+          <h4>What a reranker measures</h4>
+          <p>A reranker (VoyageAI <code>rerank-2</code>) is a <strong>cross-encoder</strong> model. It receives the query text and a chunk's text <em>together in one input</em> and produces a relevance score for that specific pair. It can read both simultaneously and reason about their relationship.</p>
+          <pre><code>-- Cosine (bi-encoder): embed separately, compare vectors
+embed("how does JWT refresh work?")   →  vector A
+embed("def refresh_token(...)  ...")  →  vector B
+score = cosine(A, B)                  →  0.72   (geometric angle)
+
+-- Reranker (cross-encoder): see both at once
+rerank(
+    query="how does JWT refresh work?",
+    doc="def refresh_token(...): ..."
+)  →  0.91   (semantic relevance judgment)</code></pre>
+          <p>The reranker can catch things cosine misses:</p>
+          <ul>
+            <li>Query uses different terminology than the code — cosine may score low; reranker understands the concept</li>
+            <li>A chunk is <em>about</em> the right topic but doesn't <em>answer</em> the query — cosine scores it high; reranker scores it low</li>
+            <li>A chunk answers the query indirectly — cosine may miss it; reranker recognises the relevance</li>
+          </ul>
+        </div>
+
+        <div class="finding">
+          <h4>Analogy</h4>
+          <p>Cosine similarity is like <strong>matching book covers</strong> — fast, works at scale, but imprecise. Reranking is like <strong>actually reading the relevant pages</strong> — slower, but accurate. HNSW narrows 1M chunks to 300 candidates (cover matching). The reranker then reads all 300 to find the true top-10 (reading the pages). Doing a full read on 1M chunks would be too expensive; doing cover-matching on 300 is wasteful when you can afford to read them.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Summary answer to Q1</h4>
+          <p>Cosine similarity is a fast filter — it gets you in the right neighbourhood. Reranking is a precision model — it finds the right house in that neighbourhood. You need both because cosine alone cannot model query–document relevance at a semantic level; it only measures geometric proximity in embedding space.</p>
+        </div>
+
+        <h3 style="margin-top:24px;">Question 2 — Why re-score the original 300 in round 2?</h3>
+
+        <div class="finding">
+          <h4>Reranking is not additive — it scores a batch, not individual documents</h4>
+          <p>When you call <code>rerank(query, documents=[...300 docs...])</code>, the reranker produces scores across the whole batch. In round 2 you have 400 documents. The problem with <em>not</em> re-scoring the original 300 is that <strong>the two sets of scores are on incompatible scales</strong>:</p>
+          <ul>
+            <li>Round 1 scores: the reranker calibrated across 300 documents</li>
+            <li>The 100 new chunks: they only have raw cosine scores from HNSW neighbor lookup</li>
+          </ul>
+          <p>You cannot simply compare a round-1 rerank score of 0.85 against a cosine score of 0.72 — they come from completely different models with different scales. Merging them would produce nonsense rankings.</p>
+        </div>
+
+        <div class="finding">
+          <h4>The competition analogy</h4>
+          <p>Imagine a 300-runner race. You rank them: #1 = Alice, #2 = Bob … then 100 new runners arrive. You cannot say "I already know Alice is #1, so just race the 100 newcomers against each other and slot them in." The new runners might be faster than Alice. You have to run the full race with all 400 to get a fair unified ranking.</p>
+          <p>Reranking the original 300 again in round 2 is exactly that: running the full race again with all 400 participants to get honest, comparable scores across the entire pool.</p>
+        </div>
+
+        <div class="finding">
+          <h4>The secondary benefit: score drift detection</h4>
+          <p>Re-scoring the original 300 also serves the termination logic. The algorithm tracks whether the top-5 chunks' scores <em>drop</em> after expansion (termination condition 4: drop ≥ 0.15). If the new 100 chunks are better than some of the original top-5, their scores will drop in the new ranking — signalling that the search space is saturated and further expansion won't help. This only works if all 400 are scored on the same scale in the same call.</p>
+          <pre><code>-- Round 1: [A=0.91, B=0.88, C=0.85, D=0.80, E=0.75, ...]  ← top-5 tracked
+-- Round 2: rerank all 400 → [X=0.93, A=0.89, Y=0.87, B=0.72, C=0.70, ...]
+--           B dropped 0.88 → 0.72 = drop of 0.16 ≥ 0.15 → TERMINATE</code></pre>
+        </div>
+
+        <div class="verdict">
+          <strong>One-line answers</strong>
+          <p><strong>Q1:</strong> Cosine similarity measures geometric closeness of independently-created vectors; a reranker measures actual query–document relevance by reading both together — a fundamentally better signal that cosine cannot replicate.</p>
+          <p style="margin-top:8px;"><strong>Q2:</strong> Scores from different rerank batches are on incompatible scales; you must score all candidates in one call to get a unified, comparable ranking — and re-scoring the originals also enables the score-drop termination check.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q6 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q7 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q7</span>
+      <div>
+        <div class="q-title">Is there a benefit to deduplicating before reranking all 400 vectors?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Search</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> In multi-hop round 2 we rerank all 400 documents (300 original + 100 new). Would it be beneficial to deduplicate near-identical chunks <em>before</em> sending them to the reranker?
+      </div>
+
+      <div class="answer-block">
+        <h3>What ChunkHound already does</h3>
+
+        <div class="finding">
+          <h4>Exact dedup by chunk_id — already implemented</h4>
+          <p>ChunkHound already deduplicates using a <code>seen_chunk_ids</code> set. When expanding, any neighbor whose <code>chunk_id</code> is already in the pool is silently dropped:</p>
+          <pre><code># multi_hop_strategy.py lines 163, 217-219
+seen_chunk_ids = {result["chunk_id"] for result in initial_results}
+...
+if neighbor["chunk_id"] not in seen_chunk_ids:
+    new_candidates.append(neighbor)
+    seen_chunk_ids.add(neighbor["chunk_id"])</code></pre>
+          <p>So the same chunk will <strong>never appear twice</strong> in the 400. What ChunkHound does <strong>not</strong> do is detect two <em>different</em> chunks with nearly identical content.</p>
+        </div>
+
+        <h3>The question is about semantic / content-level dedup</h3>
+
+        <div class="finding">
+          <h4>When near-duplicate chunks exist in practice</h4>
+          <p>Even with unique chunk IDs, a codebase can produce near-duplicate content chunks:</p>
+          <ul>
+            <li>Copy-pasted helper functions across files</li>
+            <li>Overloaded methods with identical bodies</li>
+            <li>Generated boilerplate (e.g., 10 identical <code>__init__</code> methods)</li>
+            <li>A function and its test mock that mirror each other</li>
+          </ul>
+          <p>In such cases the 400-document pool might contain 30 near-identical chunks, all of which will receive similar rerank scores — crowding out diverse results.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Benefits of content-level dedup before reranking</h4>
+          <table>
+            <tr><th>Benefit</th><th>How much it matters</th></tr>
+            <tr>
+              <td><strong>API cost reduction</strong> — reranking charges per document/token. Fewer docs = cheaper call.</td>
+              <td>Meaningful if the codebase has lots of repeated patterns. Minor otherwise.</td>
+            </tr>
+            <tr>
+              <td><strong>Result diversity</strong> — final top-K won't be filled with 8 variations of the same function.</td>
+              <td>High value for user experience — 10 diverse results &gt; 10 near-identical ones.</td>
+            </tr>
+            <tr>
+              <td><strong>Reranker score distribution</strong> — near-duplicates cluster at similar scores and dilute the top-K slots, pushing genuinely different relevant chunks off the page.</td>
+              <td>Moderate — depends on how many duplicates exist.</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>Costs and complications</h4>
+          <table>
+            <tr><th>Cost</th><th>Reality</th></tr>
+            <tr>
+              <td><strong>You already have the embeddings</strong> — so dedup is cheap: compute cosine between all 400 pairs to find near-duplicates.</td>
+              <td>400 × 400 = 160,000 comparisons at 1536 dims each. Fast in-memory but non-trivial.</td>
+            </tr>
+            <tr>
+              <td><strong>Threshold choice</strong> — what cosine similarity defines "duplicate"? 0.98? 0.95?</td>
+              <td>Requires tuning. Too aggressive = drop legitimate results. Too loose = no effect.</td>
+            </tr>
+            <tr>
+              <td><strong>Information loss</strong> — two nearly-identical chunks from different files might both be relevant (same pattern used in two contexts).</td>
+              <td>Real risk. A user might want to know the pattern appears in multiple places.</td>
+            </tr>
+            <tr>
+              <td><strong>Termination logic breaks</strong> — the score-drop detection tracks specific chunk_ids across rounds. If you dedup and drop a tracked chunk, the termination signal misfires.</td>
+              <td>Fixable but adds complexity.</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>Better alternative: dedup at result display time, not before reranking</h4>
+          <p>Rather than deduplicating the rerank input (which distorts the scoring), a cleaner approach is to <strong>dedup the final output</strong>:</p>
+          <ol>
+            <li>Rerank all 400 normally — get clean, comparable scores</li>
+            <li>Walk the ranked list top-to-bottom</li>
+            <li>For each result, check if a near-identical chunk is already in the output set</li>
+            <li>If yes, skip it (but keep a reference like "also found in file X")</li>
+            <li>Return top-K diverse results</li>
+          </ol>
+          <p>This preserves reranking integrity (all 400 scored fairly) and still gives the user diverse results. The cost is tiny — you're only comparing against the already-accepted top-K, not all 400 pairs.</p>
+        </div>
+
+        <div class="callout callout-amber">
+          <strong>ChunkHound's current state:</strong> Does not implement content-level dedup at either stage. The exact chunk_id dedup prevents the same chunk appearing twice, but near-duplicate content from different chunks will both reach the reranker and both appear in results. This is a real gap for codebases with a lot of repeated patterns.
+        </div>
+
+        <div class="verdict">
+          <strong>Answer</strong>
+          <p>Yes, content-level dedup has real benefits — mainly result diversity and cost. But doing it <em>before</em> reranking risks distorting scores and breaking termination logic. The right place to dedup is <strong>after reranking, before returning results</strong> — where you already have reliable scores and can collapse near-duplicates without affecting the ranking math. ChunkHound does not currently do this.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q7 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q8 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q8</span>
+      <div>
+        <div class="q-title">What exactly happens in the "expand" stage of multi-hop search?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Search</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> Multi-hop search "expands" from the top-5 results to find more candidates. What does "expand" mean mechanically — does it follow code references, traverse a graph, or something else?
+      </div>
+
+      <div class="answer-block">
+        <h3>The short answer</h3>
+
+        <div class="finding">
+          <h4>Expand = run a new HNSW search using a found chunk's embedding as the query vector</h4>
+          <p>There is no graph traversal, no code reference following, no AST relationship tracking. "Expand" means: take one of the top-5 chunks from the current round, look up its stored embedding vector, and use that vector as the input to a brand new HNSW nearest-neighbor search. The result is the 20 chunks that live closest to it in embedding space.</p>
+          <pre><code>-- Expand around candidate chunk #42:
+
+-- Step 1: fetch chunk #42's embedding vector
+SELECT embedding FROM embeddings_1536
+WHERE chunk_id = 42 AND provider = 'voyageai' AND model = 'voyage-3';
+-- returns: [0.012, -0.834, 0.441, ...]   ← 1536 floats
+
+-- Step 2: use that vector as a new HNSW query
+SELECT
+    c.id AS chunk_id, c.symbol, c.code, c.start_line, c.end_line,
+    f.path AS file_path,
+    1.0 - array_cosine_distance(e.embedding, [0.012,-0.834,0.441,...]::FLOAT[1536]) AS score
+FROM embeddings_1536 e
+JOIN chunks c ON e.chunk_id = c.id
+JOIN files f  ON c.file_id  = f.id
+WHERE e.provider = 'voyageai'
+  AND e.model    = 'voyage-3'
+  AND c.id != 42          -- exclude the seed chunk itself
+ORDER BY array_cosine_distance(e.embedding, [...]) ASC
+LIMIT 20;                 -- 20 neighbors in normal mode, 30 in exhaustive</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>Why this is more powerful than just asking HNSW for 300 results instead of 100</h4>
+          <p>This is the key insight. The original HNSW search uses the <strong>query embedding</strong> — a vector encoding what the user <em>asked</em>. The expansion uses a <strong>result chunk's embedding</strong> — a vector encoding what a good <em>answer looks like</em>.</p>
+          <p>These two vectors point to different places in embedding space:</p>
+          <pre><code>Query: "how does JWT token refresh work?"
+→ query embedding lives near: authentication, tokens, sessions, expiry concepts
+
+Top result chunk: def refresh_token(user_id, old_token): ...
+→ chunk embedding lives near: token rotation, revocation, database writes, audit logs
+
+Expanding from the chunk finds: token_store.invalidate(), audit_log.record(),
+session_cleanup(), rotation_policy — code that looks like the ANSWER,
+not code that looks like the QUESTION.</code></pre>
+          <p>Simply increasing HNSW's initial <code>LIMIT</code> from 100 to 400 would return more chunks that look like the question — all clustered around authentication concepts. Expansion from a found answer reaches different corners of the embedding space that the query vector never pointed at.</p>
+        </div>
+
+        <div class="finding">
+          <h4>The expand loop step by step</h4>
+          <table>
+            <tr><th>Step</th><th>What happens</th><th>Numbers (normal mode)</th></tr>
+            <tr>
+              <td>1. Select seeds</td>
+              <td>Take top-5 chunks from the current reranked pool</td>
+              <td>5 chunks</td>
+            </tr>
+            <tr>
+              <td>2. Fetch each seed's embedding</td>
+              <td>SELECT embedding FROM embeddings_{dims} WHERE chunk_id = ?</td>
+              <td>5 DB reads</td>
+            </tr>
+            <tr>
+              <td>3. Run HNSW per seed</td>
+              <td>Each seed embedding becomes a new query vector</td>
+              <td>5 HNSW searches</td>
+            </tr>
+            <tr>
+              <td>4. Filter already-seen</td>
+              <td>Drop any neighbor chunk_id already in seen_chunk_ids set</td>
+              <td>up to 100 new chunks</td>
+            </tr>
+            <tr>
+              <td>5. Add to pool</td>
+              <td>Append new chunks to all_results</td>
+              <td>pool grows: 300 → up to 400</td>
+            </tr>
+            <tr>
+              <td>6. Rerank entire pool</td>
+              <td>Send all docs to reranker, update scores</td>
+              <td>1 rerank API call on ~400 docs</td>
+            </tr>
+            <tr>
+              <td>7. Check termination</td>
+              <td>Score drop? Time limit? Quality too low?</td>
+              <td>If no → go back to step 1 with new top-5</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>What "neighbors in embedding space" means conceptually</h4>
+          <p>Two chunks are neighbors if their vectors have high cosine similarity — meaning the embedding model assigned them similar positions in the 1536-dimensional space because they discuss similar concepts. This is <em>not</em> based on:</p>
+          <ul>
+            <li>File proximity (they can be in completely different files)</li>
+            <li>Code references (no import/call-graph analysis)</li>
+            <li>Lexical similarity (they don't need shared keywords)</li>
+          </ul>
+          <p>It is purely: <strong>"the embedding model thinks these chunks are about the same thing."</strong> Two chunks from completely unrelated files that both handle token expiry will be neighbors even if they never reference each other.</p>
+        </div>
+
+        <div class="finding">
+          <h4>How many hops typically happen in practice?</h4>
+          <p>The 5-second time limit (normal mode) usually allows 2–4 expansion rounds before termination — partly from time, partly from the score-drop or minimum-relevance conditions. In exhaustive mode (600s timeout) the loop can run many more rounds, but typically converges in 5–10 because the score-drop condition fires once the neighborhood is saturated.</p>
+        </div>
+
+        <div class="callout callout-blue">
+          <strong>Mental model:</strong> Think of the embedding space as a city map. The query vector is your starting address. HNSW finds the 300 buildings closest to that address. Expansion says: "the best building we found is on Oak Street — now find the 20 buildings closest to <em>Oak Street</em>, not to where we started." Each hop explores a new neighbourhood centred on a good answer, not on the original question.
+        </div>
+
+        <div class="verdict">
+          <strong>One-line summary</strong>
+          <p>Expand = look up a good result's stored embedding vector, run a fresh HNSW search using it as the query, collect the 20 nearest chunks (that haven't been seen yet), and add them to the pool. No graph traversal — purely re-using HNSW with answer-vectors instead of the original question-vector.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q8 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q9 ─────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q9</span>
+      <div>
+        <div class="q-title">Does reranking happen only at the end on all 400 docs, or also during intermediate expansion steps?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Search</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> We know reranking runs on the accumulated pool of ~400 docs. Does it also run during intermediate expansion steps, or only once at the end?
+      </div>
+
+      <div class="answer-block">
+        <h3>Answer: reranking runs after EVERY expansion round — not just at the end</h3>
+
+        <div class="finding">
+          <h4>The full reranking timeline</h4>
+          <pre><code>Round 0 (initial):
+  HNSW → 300 candidates
+  RERANK all 300  ← rerank #1
+  → top-5 identified → used as seeds for expansion
+
+Round 1 (first expand):
+  find 20 neighbors × 5 seeds = up to 100 new chunks
+  pool grows 300 → up to 400
+  RERANK all 400  ← rerank #2
+  → new top-5 identified → seeds for next expansion
+
+Round 2 (second expand):
+  find 20 neighbors × 5 new seeds = up to 100 more new chunks
+  pool grows 400 → up to 500
+  RERANK all 500  ← rerank #3
+  → check termination conditions
+  → if not done, repeat...
+
+Final output:
+  apply threshold filter
+  paginate top-K from the last reranked pool</code></pre>
+          <p>There is no separate "final rerank." The last rerank that ran <em>is</em> the final ranking. The pool is always fully reranked before the next expansion decision is made.</p>
+        </div>
+
+        <div class="finding">
+          <h4>From the actual code — two rerank call sites</h4>
+          <pre><code>-- Call site 1: after initial HNSW search (line 133)
+rerank_results = await self._embedding_provider.rerank(
+    query=query,
+    documents=documents,          -- the initial 300
+    top_k=len(documents),
+)
+
+-- Call site 2: inside the expansion loop, after each expand (line 246)
+rerank_results = await self._embedding_provider.rerank(
+    query=query,
+    documents=[result["content"] for result in all_results],  -- growing pool
+    top_k=len(documents),
+)</code></pre>
+          <p>Both calls have identical structure. The only difference is that the second call is inside the <code>while True</code> loop — it runs once per expansion round.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Why reranking must happen at every intermediate step — not just at the end</h4>
+          <p>The rerank scores after each round are what <strong>drive the next expansion</strong>. The algorithm picks the top-5 seeds for the next hop based on the current rerank scores:</p>
+          <pre><code>top_candidates = [r for r in all_results if r.get("score", 0.0) > 0.0][:5]</code></pre>
+          <p>If you skipped intermediate reranks and only reranked at the very end, you would have to choose the next seeds using raw cosine scores — which are the weaker signal. The expansion would be guided by the wrong metric, finding neighbors of chunks that are geometrically close to the query but not actually the most relevant. The whole point of multi-hop is that each hop is guided by reranker judgment, not cosine judgment.</p>
+        </div>
+
+        <div class="finding">
+          <h4>The termination conditions also depend on intermediate rerank scores</h4>
+          <p>Two of the five termination conditions read from rerank scores that are updated every round:</p>
+          <ul>
+            <li><strong>Score degradation</strong> — tracked chunks' scores are compared round-over-round. This only works if reranking runs every round.</li>
+            <li><strong>Minimum relevance</strong> — the top-5 minimum score is checked after each rerank. Without intermediate reranks, you'd have no signal to stop early.</li>
+          </ul>
+          <p>If reranking only happened once at the end, the algorithm would have to run until the time limit or result cap — it could never stop early because it would have no score signal to check.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Cost implication</h4>
+          <p>This means the reranking API is called <strong>once per expansion round</strong>, each time on a growing document pool. If multi-hop runs 3 rounds:</p>
+          <table>
+            <tr><th>Round</th><th>Docs reranked</th><th>API call</th></tr>
+            <tr><td>Initial</td><td>~300</td><td>rerank #1</td></tr>
+            <tr><td>Expansion 1</td><td>~400</td><td>rerank #2</td></tr>
+            <tr><td>Expansion 2</td><td>~500</td><td>rerank #3</td></tr>
+            <tr><td><strong>Total</strong></td><td><strong>~1200 doc-scorings</strong></td><td><strong>3 API calls</strong></td></tr>
+          </table>
+          <p>The growing pool size also explains why the 5-second time limit exists — each rerank call on 500 docs takes real time, and the loop compounds it.</p>
+        </div>
+
+        <div class="verdict">
+          <strong>One-line summary</strong>
+          <p>Reranking runs after every single expansion round — not just at the end. The rerank scores from each round are the steering wheel for the next hop: they decide which 5 chunks become the expansion seeds. Without intermediate reranks, multi-hop would have no way to guide itself or terminate early.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q9 ─────────────────────────────────────────────────── -->
+
+  <!-- ── Q10 ────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q10</span>
+      <div>
+        <div class="q-title">Does reranking happen after each of the 5 individual HNSW queries during expansion, or once after all 5 complete?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Search</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Observation:</strong> During the expand stage we noticed what looked like rerank calls happening, possibly one after each of the 5 HNSW vector queries. Is there 1 rerank per expansion round, or 5?
+      </div>
+
+      <div class="answer-block">
+        <h3>Answer: 1 rerank per expansion round — not 5</h3>
+
+        <div class="finding">
+          <h4>The exact code (multi_hop_strategy.py lines 196–250)</h4>
+          <pre><code>-- EXPANSION LOOP for one round:
+
+new_candidates = []
+for candidate in top_candidates:           # ← iterates 5 times
+    neighbors = self._db.find_similar_chunks(
+        chunk_id=candidate["chunk_id"], ... # ← HNSW vector query #1, #2, #3, #4, #5
+    )
+    for neighbor in neighbors:             # ← collect results, no rerank here
+        if neighbor["chunk_id"] not in seen_chunk_ids:
+            new_candidates.append(neighbor)
+            seen_chunk_ids.add(neighbor["chunk_id"])
+
+# ← for loop is DONE — all 5 HNSW queries complete
+
+all_results.extend(new_candidates)         # ← add ALL new chunks at once
+
+rerank_results = await self._embedding_provider.rerank(  # ← ONE rerank call
+    query=query,
+    documents=[result["content"] for result in all_results],
+    top_k=len(documents),
+)</code></pre>
+          <p>The rerank call is <strong>outside the for loop</strong>. The 5 HNSW queries run to completion first, all their results are collected into <code>new_candidates</code>, added to <code>all_results</code>, and only then is a single rerank call made on the entire accumulated pool.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Full rerank call count for a 3-round run</h4>
+          <table>
+            <tr><th>Stage</th><th>HNSW queries</th><th>Rerank calls</th><th>Docs sent to reranker</th></tr>
+            <tr><td>Initial search</td><td>1 (the original query)</td><td>1</td><td>~100</td></tr>
+            <tr><td>Expansion round 1</td><td>5 (one per top-5 seed)</td><td>1</td><td>~200</td></tr>
+            <tr><td>Expansion round 2</td><td>5</td><td>1</td><td>~300</td></tr>
+            <tr><td>Expansion round 3</td><td>5</td><td>1</td><td>~400</td></tr>
+            <tr><td><strong>Total</strong></td><td><strong>16 HNSW queries</strong></td><td><strong>4 rerank calls</strong></td><td>—</td></tr>
+          </table>
+          <p>So for 3 expansion rounds: <strong>15 HNSW DB queries</strong> (5 per round) and <strong>4 rerank API calls</strong> (1 initial + 1 per round). The two operations are completely separate and do not interleave.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Why the observation of "5 rerank calls" was misleading</h4>
+          <p>What you likely saw was the 5 <code>find_similar_chunks</code> DB calls — one per top-5 seed chunk, each running a full HNSW vector search. These are database queries, not rerank API calls. They look similar in a trace because both are async operations that resolve one after another during the expansion phase. The single rerank then fires after all 5 DB queries complete.</p>
+        </div>
+
+        <div class="callout callout-blue">
+          <strong>Pattern:</strong> Expand (5 × HNSW) → collect all new chunks → Rerank once on full pool → check termination → repeat. The rerank is always the last operation in each round, never interleaved with individual HNSW queries.
+        </div>
+
+        <div class="verdict">
+          <strong>Answer</strong>
+          <p>1 rerank per expansion round. The 5 HNSW queries all run first (inside the for loop), results are pooled, then one rerank call fires on the entire accumulated set. What appeared to be 5 rerank calls were likely the 5 <code>find_similar_chunks</code> HNSW database queries.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q10 ────────────────────────────────────────────────── -->
+
+  <!-- ── Q11 ────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q11</span>
+      <div>
+        <div class="q-title">What does <code>unified_search.py</code> do, and does it reconcile with the multi-hop explanation?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Search</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> <code>chunkhound/services/research/shared/unified_search.py</code> has its own search flow. Does it contradict or extend what we described for multi-hop search?
+      </div>
+
+      <div class="answer-block">
+        <h3>Short answer: it reconciles — it is a higher layer that wraps multi-hop</h3>
+
+        <div class="finding">
+          <h4>Where it sits in the system</h4>
+          <p>Everything discussed in Q5–Q10 about multi-hop search describes <code>MultiHopStrategy</code> — the vector-search engine. <code>UnifiedSearch</code> is a <strong>research-mode orchestrator</strong> that calls multi-hop as its first step, then adds a symbol-extraction + regex layer on top. It is only used in the <code>research</code> command, not in the regular <code>search</code> command.</p>
+          <pre><code>chunkhound search "..."   →  MultiHopStrategy (or SingleHopStrategy) directly
+
+chunkhound research "..."  →  UnifiedSearch (7-step pipeline)
+                                   └── step 2: calls MultiHopStrategy internally</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>The 7-step UnifiedSearch pipeline</h4>
+          <table>
+            <tr><th>Step</th><th>What happens</th><th>Output</th></tr>
+            <tr>
+              <td><strong>1</strong></td>
+              <td>Multi-hop semantic search (force_strategy="multi_hop") — the entire flow from Q5–Q10 happens here, including all internal expansion rounds and reranks</td>
+              <td>~30–500 semantically ranked chunks</td>
+            </tr>
+            <tr>
+              <td><strong>2</strong></td>
+              <td>Extract symbols from semantic results — reads <code>chunk.symbol</code>, parameter names, and parameter types already stored by the CAST parser. No re-parsing.</td>
+              <td>Ordered list of symbol names (e.g. <code>refresh_token</code>, <code>TokenStore</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>3</strong></td>
+              <td>Select top-N symbols (default: config.max_symbols). Preserves first-seen order from ranked semantic results.</td>
+              <td>Trimmed symbol list</td>
+            </tr>
+            <tr>
+              <td><strong>4</strong></td>
+              <td>Parallel regex search for each symbol — runs LIKE pattern searches concurrently across the DB, paginating until target-per-symbol found. Excludes chunk IDs already in semantic results.</td>
+              <td>Additional chunks not found by vector search</td>
+            </tr>
+            <tr>
+              <td><strong>5</strong></td>
+              <td>Unify: merge semantic + regex results deduplicating by chunk_id. Semantic results take priority.</td>
+              <td>Combined pool</td>
+            </tr>
+            <tr>
+              <td><strong>6</strong></td>
+              <td>Final unified rerank — reranks the entire combined pool against the ROOT query (not the BFS sub-query). If compound reranking: runs one rerank per query, averages scores.</td>
+              <td>Final ranked list</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>The key insight: vector search misses exact symbol references</h4>
+          <p>Multi-hop finds chunks that are <em>semantically similar</em> to the query. But consider: you search for "how does token refresh work?" — multi-hop finds the <code>refresh_token()</code> function. However, there may be a completely different file (<code>audit_logger.py</code>) that calls <code>refresh_token()</code> by exact name but is not semantically about token refresh. Its embedding vector might not be close to the query vector at all.</p>
+          <p>Symbol extraction + regex finds this: it reads the symbol name <code>refresh_token</code> from the semantic results and then searches the whole codebase for any chunk whose code contains <code>\brefresh_token\b</code>. This catches callers, tests, wrappers — code that <em>uses</em> the relevant symbol but doesn't discuss it semantically.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Why the final rerank uses the ROOT query, not the sub-query</h4>
+          <p>In research mode, ChunkHound explores a topic via BFS — breaking the question into sub-queries at each depth level. Each call to UnifiedSearch might be for a sub-query like "JWT revocation list implementation." The final Step 6 rerank deliberately uses the <strong>original root question</strong> ("how does authentication work?") — not the sub-query. The comment explains:</p>
+          <pre><code># Step 7: Unified rerank against ROOT query (not BFS queries)
+# Prevents diversity collapse — a sub-query rerank would score everything
+# "about JWT revocation" highly, pushing out other relevant chunks.
+# Root query reranking keeps the final ranking aligned with the user's
+# original intent.</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>Total rerank calls in a full UnifiedSearch run</h4>
+          <table>
+            <tr><th>Stage</th><th>Rerank calls</th><th>Documents per call</th></tr>
+            <tr><td>Multi-hop initial</td><td>1</td><td>~100</td></tr>
+            <tr><td>Multi-hop expansion (per round)</td><td>1 per round (~2–4)</td><td>~200–500 growing</td></tr>
+            <tr><td>UnifiedSearch Step 6 (final unified)</td><td>1 (or N for compound)</td><td>semantic + regex combined</td></tr>
+          </table>
+          <p>This explains what was observed earlier — multiple rerank calls happen during a research query: most are the internal multi-hop expansion reranks, plus one final unified rerank at the end.</p>
+        </div>
+
+        <div class="callout callout-blue">
+          <strong>Stack summary:</strong><br>
+          <code>research command</code><br>
+          &nbsp;&nbsp;└── <code>UnifiedSearch.unified_search()</code> — 7-step pipeline<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── step 1: <code>SearchService.search_semantic(force_strategy="multi_hop")</code><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <code>MultiHopStrategy.search()</code> — HNSW + iterative expand + rerank per round<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── steps 2–5: symbol extraction + parallel regex<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── step 6: final unified rerank against root query
+        </div>
+
+        <div class="verdict">
+          <strong>Reconciliation</strong>
+          <p>Everything said about multi-hop in Q5–Q10 is correct — it describes the inner engine. <code>UnifiedSearch</code> is a research-mode wrapper that calls that engine, then adds a second search dimension (symbol-based regex) to find chunks that reference relevant code by name rather than by meaning, and finishes with one more rerank that unifies both dimensions against the user's original question.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q11 ────────────────────────────────────────────────── -->
+
+  <!-- ── Q12 ────────────────────────────────────────────────────── -->
+  <div class="q-card">
+    <div class="q-header">
+      <span class="q-num">Q12</span>
+      <div>
+        <div class="q-title">Is <code>unified_search()</code> called multiple times per research query, and why?</div>
+        <span class="q-tag tag-design">Algorithm</span>
+        <span class="q-tag tag-db">Research</span>
+        <span class="q-tag tag-answered">Answered</span>
+      </div>
+    </div>
+
+    <div class="q-body">
+      <div class="q-observation">
+        <strong>Question:</strong> <code>UnifiedSearch.unified_search()</code> is called from the research BFS engine. Is it called once per research query, or multiple times? Why?
+      </div>
+
+      <div class="answer-block">
+        <h3>Answer: yes — once per BFS node, up to 4 times total</h3>
+
+        <div class="finding">
+          <h4>The full research pipeline (BFS with depth=1)</h4>
+          <pre><code>User: chunkhound research "how does authentication work?"
+
+Step A — Initial search (call #1)
+  deep_research() calls unified_search(root_query)
+  → returns initial chunks
+  → root BFS node populated
+
+Step B — LLM generates follow-up questions (no search)
+  QuestionGenerator sees the initial chunks
+  LLM asks: "what unexplored code elements did I see?"
+  → generates up to 3 sub-questions:
+      "how does JWT token refresh work?"
+      "where is the session store implemented?"
+      "how does the logout flow invalidate tokens?"
+
+Step C — BFS depth 1: one unified_search() per follow-up (calls #2, #3, #4)
+  _process_node("how does JWT token refresh work?")   → unified_search() call #2
+  _process_node("where is session store implemented?") → unified_search() call #3
+  _process_node("how does logout invalidate tokens?")  → unified_search() call #4
+  (all 3 run concurrently)
+
+  Each call:
+    - runs multi-hop search for its sub-question
+    - extracts symbols, runs regex
+    - checks: did we find NEW chunks not seen yet?
+    - if 0 new chunks → marks as terminated leaf, no further children
+
+Step D — No depth 2 (MAX_DEPTH = 1)
+  Even if follow-up nodes found new info, they generate no children.
+  BFS stops.</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>Why BFS at all — why not just search the root query harder?</h4>
+          <p>A single multi-hop search on "how does authentication work?" starts from the query vector and expands outward in embedding space. It finds chunks that are semantically similar to authentication. But it will miss code that is <em>topically adjacent but not semantically close</em> — e.g., rate limiting, CSRF protection, or audit logging — because those concepts don't appear in the original query vector's neighborhood.</p>
+          <p>The BFS approach lets an LLM look at what was found and generate targeted follow-up questions about the <em>gaps</em> it observes. Each follow-up query creates a new vector neighborhood to explore. This covers the topic from multiple angles rather than one expanding sphere.</p>
+        </div>
+
+        <div class="finding">
+          <h4>Query expansion: each unified_search() call is actually 3 searches in parallel</h4>
+          <p>Before calling <code>unified_search()</code>, <code>PluggableResearchService</code> expands each query into 3 variants using an LLM — the original + 2 rephrasings. All 3 are searched in parallel inside <code>unified_search()</code> and deduplicated by chunk_id. This means one BFS node = 3 parallel multi-hop searches.</p>
+          <pre><code>unified_search("how does JWT token refresh work?")
+  └─ parallel semantic search × 3 queries:
+       "how does JWT token refresh work?"          (original)
+       "token rotation and refresh implementation" (LLM variant 1)
+       "refresh token validation and storage"      (LLM variant 2)
+  └─ deduplicate results
+  └─ symbol extraction + regex
+  └─ final unified rerank against ROOT query</code></pre>
+        </div>
+
+        <div class="finding">
+          <h4>Total call counts for one research query (worst case)</h4>
+          <table>
+            <tr><th>Stage</th><th>unified_search() calls</th><th>Internal multi-hop reranks</th><th>LLM calls</th></tr>
+            <tr><td>Initial search</td><td>1</td><td>~3 (initial + 2 expansion rounds)</td><td>1 (query expansion)</td></tr>
+            <tr><td>Follow-up node 1</td><td>1</td><td>~3</td><td>1 (expansion) + 1 (follow-up gen)</td></tr>
+            <tr><td>Follow-up node 2</td><td>1</td><td>~3</td><td>1</td></tr>
+            <tr><td>Follow-up node 3</td><td>1</td><td>~3</td><td>1</td></tr>
+            <tr><td><strong>Total</strong></td><td><strong>1–4</strong></td><td><strong>~4–12</strong></td><td><strong>~5–6</strong></td></tr>
+          </table>
+        </div>
+
+        <div class="finding">
+          <h4>Early termination — why you often see fewer than 4 calls</h4>
+          <p>Before each follow-up search runs, the BFS checks: does this sub-query's query vector overlap significantly with chunks already explored? If a node's search returns zero <em>new</em> chunks (all results were already in <code>global_explored_data</code>), it's marked a terminated leaf and generates no further children. In practice, the third follow-up often terminates early for queries about well-contained topics.</p>
+        </div>
+
+        <div class="callout callout-blue">
+          <strong>Full architecture stack for one research query:</strong><br><br>
+          <code>research command</code><br>
+          &nbsp;&nbsp;└── <code>PluggableResearchService.deep_research()</code><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── LLM: expand root query → 3 variants<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <code>UnifiedSearch</code> call #1 (initial)<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── LLM: generate 0–3 follow-up questions<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <code>BFSExplorationStrategy</code> (depth=1)<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── concurrent for each follow-up:<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── LLM: expand sub-query → 3 variants<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <code>UnifiedSearch</code> call #2/3/4<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── 3× parallel <code>MultiHopStrategy</code><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── symbol extraction + regex<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── final unified rerank
+        </div>
+
+        <div class="verdict">
+          <strong>One-line summary</strong>
+          <p><code>unified_search()</code> is called once for the initial query plus once per BFS follow-up node (up to 3) — so 1–4 times total. Each call covers one angle of the topic; the LLM decides what angles to explore based on what the previous call found. Max depth is 1 so the BFS is intentionally shallow but wide.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ── end Q12 ────────────────────────────────────────────────── -->
+
+  <!-- placeholder for future questions -->
+  <div class="add-q">
+    <span>+</span>
+    Add the next question here
+  </div>
+
+</div>
+
+<footer>ChunkHound Open Questions — 2026-07-05</footer>
+
+</body>
+</html>

@@ -1,0 +1,37 @@
+[
+  {
+    "id": "1",
+    "status": "completed",
+    "content": "Explore project context — read existing design doc, PR #380, comparison doc"
+  },
+  {
+    "id": "2",
+    "status": "completed",
+    "content": "Ask clarifying questions about design evolution direction"
+  },
+  {
+    "id": "3",
+    "status": "completed",
+    "content": "Propose approaches for adapting design to new pipeline"
+  },
+  {
+    "id": "4",
+    "status": "completed",
+    "content": "Present revised design sections and get approval"
+  },
+  {
+    "id": "5",
+    "status": "completed",
+    "content": "Write updated design doc (markdown + HTML)"
+  },
+  {
+    "id": "6",
+    "status": "completed",
+    "content": "Spec self-review and user review"
+  },
+  {
+    "id": "7",
+    "status": "completed",
+    "content": "Transition to implementation (writing-plans)"
+  }
+]

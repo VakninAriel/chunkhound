@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChunkHound — stack/1-compaction Branch Review</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+    #sidebar { width: 240px; min-width: 240px; background: #1e1e2e; color: #cdd6f4; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    #sidebar .brand { font-size: 14px; font-weight: 700; color: #89b4fa; padding: 0 20px 20px; letter-spacing: 0.5px; border-bottom: 1px solid #313244; margin-bottom: 16px; }
+    #sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c7086; padding: 0 20px 8px; }
+    #sidebar a { display: block; padding: 7px 20px; color: #cdd6f4; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; line-height: 1.4; }
+    #sidebar a:hover, #sidebar a.active { background: #313244; border-left-color: #89b4fa; color: #89b4fa; }
+    #sidebar .nav-sub { font-size: 11px; color: #585b70; padding: 3px 20px 3px 32px; display: block; text-decoration: none; }
+    #sidebar .nav-sub:hover { color: #89b4fa; background: #252538; }
+    #wrapper { flex: 1; display: flex; flex-direction: column; }
+    header { background: #1e1e2e; color: #cdd6f4; padding: 20px 40px; border-bottom: 3px solid #89b4fa; }
+    header h1 { font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 12px; color: #6c7086; margin-top: 6px; font-family: 'Courier New', monospace; }
+    header .meta span { color: #89b4fa; }
+    #main { padding: 32px 40px; max-width: 1000px; }
+    .section { background: #fff; border-radius: 6px; border: 1px solid #e0e0e0; padding: 24px; margin-bottom: 24px; }
+    .section h2 { font-size: 16px; font-weight: 700; color: #1e1e2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #89b4fa; display: flex; align-items: center; gap: 10px; }
+    .section h3 { font-size: 14px; font-weight: 600; color: #313244; margin: 20px 0 8px; }
+    .section p { font-size: 14px; line-height: 1.7; color: #555; margin-bottom: 10px; }
+    .section ul, .section ol { padding-left: 20px; margin: 8px 0; }
+    .section li { font-size: 14px; line-height: 1.7; color: #555; margin-bottom: 4px; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 12px 0; font-family: 'Courier New', Consolas, monospace; line-height: 1.5; }
+    code { background: #f0f0f0; color: #c0392b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }
+    pre code { background: none; color: inherit; padding: 0; }
+    details { border: 1px solid #e0e0e0; border-radius: 6px; margin: 12px 0; }
+    summary { padding: 12px 16px; background: #f8f8f8; cursor: pointer; font-weight: 600; font-size: 14px; color: #333; border-radius: 6px; }
+    details[open] summary { border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }
+    details > div { padding: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    th { background: #1e1e2e; color: #cdd6f4; padding: 10px 12px; text-align: left; font-weight: 600; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+    td code { font-size: 12px; }
+    footer { font-size: 12px; color: #aaa; text-align: center; padding: 24px 0; border-top: 1px solid #e0e0e0; margin-top: 8px; }
+    .stat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 20px; }
+    .stat-card { background: #1e1e2e; border-radius: 6px; padding: 16px; text-align: center; }
+    .stat-card .val { font-size: 26px; font-weight: 700; color: #89b4fa; font-family: 'Courier New', monospace; }
+    .stat-card .lbl { font-size: 10px; color: #6c7086; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+    .callout { background: #eff6ff; border-left: 4px solid #89b4fa; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 13px; color: #444; line-height: 1.6; }
+    .callout.warn { background: #fff8ec; border-color: #f9a825; }
+    .callout.danger { background: #fff0f0; border-color: #d22630; color: #7a1010; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .badge-new { background: #d1fae5; color: #065f46; }
+    .badge-upd { background: #dbeafe; color: #1e40af; }
+    .badge-rem { background: #fee2e2; color: #991b1b; }
+    .diagram { background: #1a1a2e; border: 1px solid #313244; border-radius: 6px; margin: 16px 0; overflow-x: auto; text-align: center; padding: 12px; }
+    .step-list { list-style: none; counter-reset: step; padding: 0; }
+    .step-list li { counter-increment: step; display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #555; align-items: flex-start; }
+    .step-list li::before { content: counter(step); background: #89b4fa; color: #1e1e2e; min-width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px; }
+    .section-icon { font-size: 18px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+  </style>
+</head>
+<body>
+
+<nav id="sidebar">
+  <div class="brand">ChunkHound</div>
+  <h2>Navigation</h2>
+  <a href="#overview">Branch Overview</a>
+  <a href="#compaction">Database Compaction</a>
+    <a class="nav-sub" href="#compact-arch">Architecture</a>
+    <a class="nav-sub" href="#compact-flow">User Flow</a>
+    <a class="nav-sub" href="#compact-deferral">Event Deferral</a>
+    <a class="nav-sub" href="#compact-config">Configuration</a>
+  <a href="#embedding">Embedding Migration</a>
+    <a class="nav-sub" href="#embed-arch">Architecture</a>
+    <a class="nav-sub" href="#embed-protocol">Matryoshka Protocol</a>
+  <a href="#diff-search">Git Diff Search</a>
+    <a class="nav-sub" href="#diff-arch">Architecture</a>
+    <a class="nav-sub" href="#diff-flow">User Flow</a>
+  <a href="#llm-registry">LLM Provider Registry</a>
+  <a href="#other">Other Features</a>
+  <a href="#architecture">System Architecture</a>
+  <a href="#testing">Test Coverage</a>
+</nav>
+
+<div id="wrapper">
+<header>
+  <h1>ChunkHound — stack/1-compaction Branch Review</h1>
+  <div class="meta">Branch: <span>stack/1-compaction</span> &nbsp;|&nbsp; Base: <span>main</span> &nbsp;|&nbsp; Author: <span>Ariel Vaknin</span> &nbsp;|&nbsp; Date: <span>2026-06-18</span></div>
+</header>
+<div id="main">
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 1: Branch Overview
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="overview">
+  <h2>Branch Overview</h2>
+
+  <div class="stat-grid">
+    <div class="stat-card"><div class="val">358</div><div class="lbl">Commits</div></div>
+    <div class="stat-card"><div class="val">405</div><div class="lbl">Files Changed</div></div>
+    <div class="stat-card"><div class="val">65k+</div><div class="lbl">Lines Added</div></div>
+    <div class="stat-card"><div class="val">14</div><div class="lbl">Feature Areas</div></div>
+    <div class="stat-card"><div class="val">~56</div><div class="lbl">Compaction Tests</div></div>
+  </div>
+
+  <p>The <code>stack/1-compaction</code> branch introduces production-grade database compaction as its primary feature, alongside embedding pipeline optimization (matryoshka truncation migration), git diff semantic search, a refactored LLM provider registry, native Rust file scanning, websearch integration, and a full Astro website rebuild. The branch also removes the interactive setup wizard in favor of a global configuration file.</p>
+
+  <h3>Feature Summary</h3>
+  <table>
+    <thead><tr><th>Feature</th><th>Status</th><th>Key Files</th></tr></thead>
+    <tbody>
+      <tr><td>Database Compaction System</td><td><span class="badge badge-new">New</span></td><td>compaction_service.py, duckdb_provider.py (optimize)</td></tr>
+      <tr><td>Embedding Migration (Matryoshka)</td><td><span class="badge badge-new">New</span></td><td>embedding_service.py, _migrate_from_full_embeddings</td></tr>
+      <tr><td>Git Diff Semantic Search</td><td><span class="badge badge-new">New</span></td><td>diff_aware_search_service.py (413 lines)</td></tr>
+      <tr><td>LLM Provider Registry</td><td><span class="badge badge-upd">Refactored</span></td><td>provider_registry.py, llm_config.py (1154 lines), claude_model_resolution.py</td></tr>
+      <tr><td>Rust Native File Scanner</td><td><span class="badge badge-new">New</span></td><td>Cargo.toml, src/lib.rs, chunkhound_native/</td></tr>
+      <tr><td>Websearch Command + MCP tool</td><td><span class="badge badge-new">New</span></td><td>websearch_core.py (673 lines), websearch_command.py</td></tr>
+      <tr><td>Global Config File (~/.chunkhound/)</td><td><span class="badge badge-new">New</span></td><td>config_factory.py refactored for dual-path resolution</td></tr>
+      <tr><td>Repack CLI Command</td><td><span class="badge badge-new">New</span></td><td>repack_parser.py, repack.py (170 lines)</td></tr>
+      <tr><td>MCP Server: selective reconnect</td><td><span class="badge badge-upd">Updated</span></td><td>tools.py (514 lines), ensure_tool_services()</td></tr>
+      <tr><td>Realtime Watcher: compaction-aware</td><td><span class="badge badge-upd">Updated</span></td><td>realtime_indexing_service.py — defer/drain/replay</td></tr>
+      <tr><td>Astro Website Rebuild</td><td><span class="badge badge-upd">Rebuilt</span></td><td>site/ (400+ components, configurator, OG images)</td></tr>
+      <tr><td>Python 3.14 + CI Modernization</td><td><span class="badge badge-upd">Updated</span></td><td>ci.yml, release.yml, release-rc.yml</td></tr>
+      <tr><td>Interactive Setup Wizard</td><td><span class="badge badge-rem">Removed</span></td><td>setup_wizard.py (2032 lines removed)</td></tr>
+      <tr><td>Stress Test Suite</td><td><span class="badge badge-new">New</span></td><td>tests/stress/ — HNSW survival, lifecycle, concurrency, frag sweep</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 2: Database Compaction
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="compaction">
+  <h2>Database Compaction</h2>
+
+  <p>DuckDB accumulates fragmentation over time as ChunkHound continuously indexes and deletes file chunks during codebase analysis. Free blocks from deleted rows, re-indexed chunks, WAL segments, and stale HNSW index metadata accumulate — degrading query performance and wasting disk space. The compaction system reclaims this space via a full EXPORT/IMPORT/SWAP cycle that rebuilds the database from scratch without any search downtime.</p>
+
+  <div class="callout">
+    <strong>Two modes:</strong> <em>Blocking</em> — used by the CLI <code>repack</code> command, pauses all operations until complete. <em>Background</em> — used by the MCP server daemon, non-blocking with a post-compaction callback to trigger reindexing.
+  </div>
+
+  <h3 id="compact-arch">Architecture</h3>
+
+  <div class="diagram">
+    <svg width="820" height="390" viewBox="0 0 820 390" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#89b4fa"/></marker>
+        <marker id="a1g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a6e3a1"/></marker>
+        <marker id="a1r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f38ba8"/></marker>
+        <marker id="a1p" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#cba6f7"/></marker>
+      </defs>
+      <rect width="820" height="390" fill="#1e1e2e" rx="8"/>
+
+      <!-- Title -->
+      <text x="410" y="26" text-anchor="middle" fill="#89b4fa" font-size="13" font-family="Segoe UI,Arial" font-weight="600">CompactionService — Architecture</text>
+
+      <!-- CLI repack -->
+      <rect x="30" y="50" width="140" height="46" rx="6" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="100" y="70" text-anchor="middle" fill="#fab387" font-size="12" font-family="Courier New">chunkhound repack</text>
+      <text x="100" y="87" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">CLI command</text>
+
+      <!-- MCP server -->
+      <rect x="210" y="50" width="140" height="46" rx="6" fill="#313244" stroke="#89b4fa" stroke-width="1.5"/>
+      <text x="280" y="70" text-anchor="middle" fill="#89b4fa" font-size="12" font-family="Courier New">MCP Server</text>
+      <text x="280" y="87" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">stdio / http</text>
+
+      <!-- IndexingCoordinator -->
+      <rect x="390" y="50" width="160" height="46" rx="6" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="470" y="70" text-anchor="middle" fill="#fab387" font-size="12" font-family="Courier New">Indexing</text>
+      <text x="470" y="87" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">Coordinator</text>
+
+      <!-- RealtimeIndexingService -->
+      <rect x="590" y="50" width="200" height="46" rx="6" fill="#313244" stroke="#f38ba8" stroke-width="1.5"/>
+      <text x="690" y="70" text-anchor="middle" fill="#f38ba8" font-size="12" font-family="Courier New">RealtimeIndexing</text>
+      <text x="690" y="87" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">Service (defer/replay)</text>
+
+      <!-- CompactionService (center) -->
+      <rect x="240" y="165" width="260" height="62" rx="8" fill="#181825" stroke="#cba6f7" stroke-width="2.5"/>
+      <text x="370" y="190" text-anchor="middle" fill="#cba6f7" font-size="14" font-family="Courier New" font-weight="700">CompactionService</text>
+      <text x="370" y="208" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">compact_blocking() / compact_background()</text>
+      <text x="370" y="221" text-anchor="middle" fill="#585b70" font-size="9" font-family="Courier New">threading.Lock · threading.Event · asyncio.to_thread</text>
+
+      <!-- DuckDBProvider -->
+      <rect x="240" y="295" width="260" height="62" rx="6" fill="#181825" stroke="#89b4fa" stroke-width="2"/>
+      <text x="370" y="320" text-anchor="middle" fill="#89b4fa" font-size="13" font-family="Courier New" font-weight="600">DuckDBProvider</text>
+      <text x="370" y="338" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">optimize() · get_storage_stats()</text>
+      <text x="370" y="351" text-anchor="middle" fill="#585b70" font-size="9" font-family="Courier New">_connection_allowed gate blocks reads during SWAP</text>
+
+      <!-- Connection gate callout -->
+      <rect x="570" y="175" width="220" height="44" rx="4" fill="#2a1020" stroke="#f38ba8" stroke-width="1.5" stroke-dasharray="5,3"/>
+      <text x="680" y="195" text-anchor="middle" fill="#f38ba8" font-size="11" font-family="Courier New">_connection_allowed gate</text>
+      <text x="680" y="211" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">MCP reads queued during SWAP phase</text>
+
+      <!-- estimate_reclaimable callout -->
+      <rect x="30" y="175" width="175" height="44" rx="4" fill="#1a2030" stroke="#89b4fa" stroke-width="1" stroke-dasharray="5,3"/>
+      <text x="117" y="195" text-anchor="middle" fill="#89b4fa" font-size="10" font-family="Courier New">estimate_reclaimable_bytes()</text>
+      <text x="117" y="210" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">upper-bound before triggering</text>
+
+      <!-- DatabaseConfig -->
+      <rect x="570" y="295" width="220" height="62" rx="4" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="680" y="318" text-anchor="middle" fill="#fab387" font-size="12" font-family="Courier New">DatabaseConfig</text>
+      <text x="680" y="335" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">compaction_enabled: bool</text>
+      <text x="680" y="350" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">threshold: 0.5 · min_size_mb: 50</text>
+
+      <!-- Arrows -->
+      <!-- CLI → CompactionService -->
+      <line x1="100" y1="96" x2="295" y2="165" stroke="#fab387" stroke-width="1.5" marker-end="url(#a1)"/>
+      <text x="155" y="130" fill="#fab387" font-size="9" font-family="Courier New" text-anchor="middle">compact_blocking()</text>
+
+      <!-- MCP → CompactionService -->
+      <line x1="280" y1="96" x2="340" y2="165" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a1)"/>
+      <text x="285" y="132" fill="#89b4fa" font-size="9" font-family="Courier New" text-anchor="middle">compact_background()</text>
+
+      <!-- IndexingCoordinator → CompactionService -->
+      <line x1="470" y1="96" x2="430" y2="165" stroke="#fab387" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#a1)"/>
+      <text x="488" y="132" fill="#fab387" font-size="9" font-family="Courier New" text-anchor="middle">suppress / periodic</text>
+
+      <!-- CompactionService → DuckDBProvider -->
+      <line x1="370" y1="227" x2="370" y2="295" stroke="#cba6f7" stroke-width="2" marker-end="url(#a1p)"/>
+      <text x="402" y="263" fill="#cba6f7" font-size="10" font-family="Courier New">optimize()</text>
+
+      <!-- Callback → RealtimeIndexing -->
+      <line x1="480" y1="165" x2="660" y2="96" stroke="#f38ba8" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#a1r)"/>
+      <text x="600" y="126" fill="#f38ba8" font-size="9" font-family="Courier New" text-anchor="middle">post-compact callback</text>
+
+      <!-- Gate from DuckDBProvider to gate box -->
+      <line x1="500" y1="315" x2="570" y2="200" stroke="#f38ba8" stroke-width="1" stroke-dasharray="3,2"/>
+
+      <!-- DatabaseConfig → CompactionService -->
+      <line x1="570" y1="316" x2="500" y2="222" stroke="#fab387" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#a1)"/>
+    </svg>
+  </div>
+
+  <h3 id="compact-flow">Compaction Cycle (7 Steps)</h3>
+  <ol class="step-list">
+    <li><strong>optimize_tables()</strong> — Run CHECKPOINT and per-table ANALYZE before the full cycle to reclaim WAL space and update statistics first.</li>
+    <li><strong>Acquire lock · Capture HNSW snapshot · soft_disconnect()</strong> — Serialize access via threading.Lock, snapshot HNSW index definitions for post-import recreation, then close the live connection.</li>
+    <li><strong>EXPORT DATABASE → Parquet staging dir</strong> — Export all tables to a temporary directory in Parquet format. The staging dir is created adjacent to the live database file.</li>
+    <li><strong>Create new DB · IMPORT DATABASE</strong> — Open a fresh DuckDB file and IMPORT from the Parquet staging dir. The result is a fully compact database by construction.</li>
+    <li><strong>Recreate HNSW indexes</strong> — Replay the HNSW snapshot in the new database. VSS vector data survives because it is stored as regular table rows, not index metadata.</li>
+    <li><strong>Write PHASE_PRE_SWAP intent · Atomic RENAME</strong> — Write a crash-recovery sentinel file, then atomically rename the compact DB into the production path (rename old → .old, rename compact → live). This is the point of no return.</li>
+    <li><strong>Probe integrity · Cleanup · Replay deferred events</strong> — Verify the swapped DB is readable via _probe_db_valid(), delete old files and staging dir, then drain and replay any filesystem events that were deferred during compaction.</li>
+  </ol>
+
+  <h3>User Flow Diagram</h3>
+  <div class="diagram">
+    <svg width="820" height="310" viewBox="0 0 820 310" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#89b4fa"/></marker>
+        <marker id="a2r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f38ba8"/></marker>
+        <marker id="a2g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a6e3a1"/></marker>
+      </defs>
+      <rect width="820" height="310" fill="#1e1e2e" rx="8"/>
+      <text x="410" y="24" text-anchor="middle" fill="#89b4fa" font-size="12" font-family="Segoe UI,Arial" font-weight="600">Compaction — Eligibility Checks + Execution Flow</text>
+
+      <!-- Start pill -->
+      <rect x="22" y="52" rx="18" ry="18" width="120" height="36" fill="#313244" stroke="#89b4fa" stroke-width="1.5"/>
+      <text x="82" y="75" text-anchor="middle" fill="#cdd6f4" font-size="11" font-family="Courier New">repack / MCP</text>
+
+      <!-- Gate 1 -->
+      <polygon points="220,50 280,70 220,90 160,70" fill="#252540" stroke="#cba6f7" stroke-width="1.5"/>
+      <text x="220" y="67" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">enabled?</text>
+      <text x="220" y="82" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">&amp; frag ≥ 0.5</text>
+
+      <!-- Gate 2 -->
+      <polygon points="390,50 450,70 390,90 330,70" fill="#252540" stroke="#cba6f7" stroke-width="1.5"/>
+      <text x="390" y="67" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">reclaimable</text>
+      <text x="390" y="82" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">≥ min_size?</text>
+
+      <!-- Gate 3 -->
+      <polygon points="560,50 620,70 560,90 500,70" fill="#252540" stroke="#cba6f7" stroke-width="1.5"/>
+      <text x="560" y="67" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">already</text>
+      <text x="560" y="82" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">compacting?</text>
+
+      <!-- Lock -->
+      <rect x="660" y="52" width="130" height="36" rx="4" fill="#1a3a1a" stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="725" y="75" text-anchor="middle" fill="#a6e3a1" font-size="11" font-family="Courier New">Lock acquired</text>
+
+      <!-- No-exit boxes -->
+      <text x="220" y="105" text-anchor="middle" fill="#f38ba8" font-size="9" font-family="Courier New">No ↓</text>
+      <rect x="165" y="112" width="110" height="26" rx="4" fill="#2a1020" stroke="#f38ba8" stroke-width="1"/>
+      <text x="220" y="130" text-anchor="middle" fill="#f38ba8" font-size="10" font-family="Courier New">skip (disabled)</text>
+
+      <text x="390" y="105" text-anchor="middle" fill="#f38ba8" font-size="9" font-family="Courier New">No ↓</text>
+      <rect x="330" y="112" width="120" height="26" rx="4" fill="#2a1020" stroke="#f38ba8" stroke-width="1"/>
+      <text x="390" y="130" text-anchor="middle" fill="#f38ba8" font-size="10" font-family="Courier New">skip (too small)</text>
+
+      <text x="560" y="105" text-anchor="middle" fill="#f38ba8" font-size="9" font-family="Courier New">Yes ↓</text>
+      <rect x="495" y="112" width="130" height="26" rx="4" fill="#2a1020" stroke="#f38ba8" stroke-width="1"/>
+      <text x="560" y="130" text-anchor="middle" fill="#f38ba8" font-size="10" font-family="Courier New">ConflictError</text>
+
+      <!-- Horizontal arrows between gates -->
+      <line x1="142" y1="70" x2="160" y2="70" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a2)"/>
+      <line x1="280" y1="70" x2="330" y2="70" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a2)"/>
+      <text x="305" y="63" fill="#a6e3a1" font-size="9" font-family="Courier New" text-anchor="middle">Yes</text>
+      <line x1="450" y1="70" x2="500" y2="70" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a2)"/>
+      <text x="475" y="63" fill="#a6e3a1" font-size="9" font-family="Courier New" text-anchor="middle">Yes</text>
+      <line x1="620" y1="70" x2="660" y2="70" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a2)"/>
+      <text x="640" y="63" fill="#a6e3a1" font-size="9" font-family="Courier New" text-anchor="middle">No</text>
+
+      <!-- Execution column (right side, vertical) -->
+      <line x1="725" y1="88" x2="725" y2="163" stroke="#89b4fa" stroke-width="1.3" marker-end="url(#a2)"/>
+      <rect x="620" y="163" width="215" height="28" rx="4" fill="#313244" stroke="#89b4fa" stroke-width="1"/>
+      <text x="727" y="182" text-anchor="middle" fill="#cdd6f4" font-size="10" font-family="Courier New">HNSW snapshot + soft_disconnect()</text>
+
+      <line x1="725" y1="191" x2="725" y2="211" stroke="#89b4fa" stroke-width="1.3" marker-end="url(#a2)"/>
+      <rect x="620" y="211" width="215" height="28" rx="4" fill="#313244" stroke="#89b4fa" stroke-width="1"/>
+      <text x="727" y="230" text-anchor="middle" fill="#cdd6f4" font-size="10" font-family="Courier New">EXPORT DATABASE → Parquet</text>
+
+      <line x1="725" y1="239" x2="725" y2="259" stroke="#89b4fa" stroke-width="1.3" marker-end="url(#a2)"/>
+      <rect x="620" y="259" width="215" height="28" rx="4" fill="#313244" stroke="#89b4fa" stroke-width="1"/>
+      <text x="727" y="278" text-anchor="middle" fill="#cdd6f4" font-size="10" font-family="Courier New">New DB · IMPORT · HNSW recreate</text>
+
+      <!-- Atomic swap (highlighted) -->
+      <line x1="725" y1="287" x2="725" y2="290" stroke="#89b4fa" stroke-width="1.3"/>
+      <rect x="590" y="290" width="215" height="28" rx="4" fill="#0d2b0d" stroke="#a6e3a1" stroke-width="2"/>
+      <text x="697" y="309" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New" font-weight="600">Intent file + atomic RENAME (swap)</text>
+
+      <!-- Gate closed label -->
+      <text x="50" y="175" fill="#f38ba8" font-size="9" font-family="Courier New">Connection</text>
+      <text x="50" y="188" fill="#f38ba8" font-size="9" font-family="Courier New">Gate CLOSED</text>
+      <text x="50" y="201" fill="#f38ba8" font-size="9" font-family="Courier New">→ reads queued</text>
+      <line x1="123" y1="188" x2="619" y2="225" stroke="#f38ba8" stroke-width="0.8" stroke-dasharray="4,3"/>
+    </svg>
+  </div>
+
+  <h3 id="compact-deferral">Event Deferral Mechanism</h3>
+  <p>During compaction the database connection is closed. The <code>RealtimeIndexingService</code> maintains four defer sets to safely capture and replay filesystem events that arrive during this window:</p>
+  <table>
+    <thead><tr><th>Attribute</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>_compaction_deferred_files</code></td><td>File modification/creation events received while compaction is active</td></tr>
+      <tr><td><code>_compaction_deferred_removals</code></td><td>File deletion events received while compaction is active</td></tr>
+      <tr><td><code>_compaction_deferred_directories</code></td><td>Directory scan events received while compaction is active</td></tr>
+      <tr><td><code>_drained_compaction_removals</code></td><td>Removals drained from the live queue before compaction begins — prevents double-processing on replay</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <strong>Crash Recovery:</strong> If the process crashes after the intent file is written but before RENAME completes (<code>PHASE_PRE_SWAP</code>), the next startup detects the sentinel and completes the swap atomically. The database is never left in a partially-swapped state.
+  </div>
+
+  <h3 id="compact-config">Configuration</h3>
+  <table>
+    <thead><tr><th>Environment Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>CHUNKHOUND_DATABASE__COMPACTION_ENABLED</code></td><td><code>true</code></td><td>Enable / disable automatic compaction entirely</td></tr>
+      <tr><td><code>CHUNKHOUND_DATABASE__COMPACTION_THRESHOLD</code></td><td><code>0.5</code></td><td>Fragmentation ratio (0–1). Triggers when effective_waste ≥ this value</td></tr>
+      <tr><td><code>CHUNKHOUND_DATABASE__COMPACTION_MIN_SIZE_MB</code></td><td><code>50</code></td><td>Minimum reclaimable bytes (MB). Prevents compacting tiny databases</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Implementation Constants</h3>
+  <table>
+    <thead><tr><th>Constant</th><th>Value</th><th>File</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>_CHUNK_INSERT_BATCH_SIZE</code></td><td><code>5000</code></td><td>duckdb_provider.py</td><td>Hard cap on chunk inserts per transaction — prevents oversized batches from causing lock pressure</td></tr>
+      <tr><td><code>_CHUNK_COMPACTION_INTERVAL</code></td><td><code>10</code></td><td>indexing_coordinator.py</td><td>Run periodic compaction every N file-batches during a chunking loop — avoids blocking compaction mid-index</td></tr>
+    </tbody>
+  </table>
+
+  <h3>CLI</h3>
+  <pre><code># Manual blocking compaction
+chunkhound repack
+
+# Compact a specific project directory
+chunkhound repack /path/to/project
+
+# Check fragmentation stats only
+chunkhound repack --dry-run</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 3: Embedding Migration
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="embedding">
+  <h2>Embedding Migration — Matryoshka Protocol</h2>
+
+  <p>This feature enables migrating an existing ChunkHound database from full-dimension embeddings to a smaller target dimension without re-embedding via the network. For models that support the <em>matryoshka</em> principle — where the first <em>n</em> dimensions of a large embedding carry equivalent semantic information to a native <em>n</em>-dimension model — truncation can be performed locally with L2 normalization, saving API cost and latency entirely.</p>
+
+  <h3 id="embed-arch">Architecture</h3>
+
+  <div class="diagram">
+    <svg width="800" height="260" viewBox="0 0 800 260" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a3" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#89b4fa"/></marker>
+        <marker id="a3g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a6e3a1"/></marker>
+        <marker id="a3r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f38ba8"/></marker>
+      </defs>
+      <rect width="800" height="260" fill="#1e1e2e" rx="8"/>
+      <text x="400" y="24" text-anchor="middle" fill="#89b4fa" font-size="12" font-family="Segoe UI,Arial" font-weight="600">Embedding Migration — Matryoshka Truncation Path</text>
+
+      <!-- Existing DB -->
+      <rect x="30" y="55" width="140" height="44" rx="6" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="100" y="73" text-anchor="middle" fill="#fab387" font-size="11" font-family="Courier New">Existing DB</text>
+      <text x="100" y="89" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">full-dim embeddings</text>
+
+      <!-- generate_missing_embeddings -->
+      <rect x="210" y="55" width="185" height="44" rx="6" fill="#313244" stroke="#89b4fa" stroke-width="1.5"/>
+      <text x="302" y="73" text-anchor="middle" fill="#89b4fa" font-size="11" font-family="Courier New">generate_missing</text>
+      <text x="302" y="89" text-anchor="middle" fill="#89b4fa" font-size="11" font-family="Courier New">_embeddings()</text>
+
+      <!-- Decision: client_side_truncation? -->
+      <polygon points="490,55 555,77 490,99 425,77" fill="#252540" stroke="#cba6f7" stroke-width="1.5"/>
+      <text x="490" y="73" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">client_side</text>
+      <text x="490" y="87" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">_truncation?</text>
+
+      <!-- YES → local migration -->
+      <line x1="555" y1="77" x2="615" y2="77" stroke="#a6e3a1" stroke-width="1.5" marker-end="url(#a3g)"/>
+      <text x="585" y="70" text-anchor="middle" fill="#a6e3a1" font-size="9" font-family="Courier New">Yes</text>
+      <rect x="615" y="60" width="170" height="35" rx="4" fill="#0d2b0d" stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="700" y="73" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New">_migrate_from_full</text>
+      <text x="700" y="87" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New">_embeddings()</text>
+
+      <!-- NO → network API -->
+      <line x1="490" y1="99" x2="490" y2="138" stroke="#f38ba8" stroke-width="1.5" marker-end="url(#a3r)"/>
+      <text x="504" y="120" fill="#f38ba8" font-size="9" font-family="Courier New">No</text>
+      <rect x="400" y="138" width="180" height="34" rx="4" fill="#2a1020" stroke="#f38ba8" stroke-width="1"/>
+      <text x="490" y="153" text-anchor="middle" fill="#f38ba8" font-size="10" font-family="Courier New">Network re-embed (API)</text>
+      <text x="490" y="167" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">batched API calls</text>
+
+      <!-- Truncation steps box -->
+      <rect x="580" y="130" width="200" height="90" rx="4" fill="#313244" stroke="#a6e3a1" stroke-width="1"/>
+      <text x="680" y="148" text-anchor="middle" fill="#cdd6f4" font-size="10" font-family="Courier New" font-weight="600">Truncation Steps</text>
+      <text x="680" y="164" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">1. Fetch full-dim vectors from DB</text>
+      <text x="680" y="178" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">2. Slice to output_dimensions</text>
+      <text x="680" y="192" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">3. L2-normalize each vector</text>
+      <text x="680" y="206" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">4. Batch-UPDATE DB records</text>
+      <text x="680" y="220" text-anchor="middle" fill="#585b70" font-size="8" font-family="Courier New">no network calls for matryoshka models</text>
+
+      <!-- Updated DB -->
+      <rect x="30" y="195" width="140" height="44" rx="6" fill="#313244" stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="100" y="214" text-anchor="middle" fill="#a6e3a1" font-size="11" font-family="Courier New">Updated DB</text>
+      <text x="100" y="230" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">truncated embeddings</text>
+
+      <!-- Arrows back to Updated DB -->
+      <line x1="580" y1="175" x2="190" y2="217" stroke="#a6e3a1" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#a3g)"/>
+      <line x1="490" y1="172" x2="183" y2="215" stroke="#f38ba8" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#a3r)"/>
+
+      <!-- Main flow arrows -->
+      <line x1="170" y1="77" x2="210" y2="77" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a3)"/>
+      <line x1="395" y1="77" x2="425" y2="77" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a3)"/>
+
+      <!-- Truncation box from YES -->
+      <line x1="700" y1="95" x2="700" y2="130" stroke="#a6e3a1" stroke-width="1.2" marker-end="url(#a3g)"/>
+
+      <!-- Performance note -->
+      <rect x="210" y="198" width="175" height="40" rx="4" fill="#1a1a30" stroke="#6c7086" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="297" y="214" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">600 catalog queries eliminated</text>
+      <text x="297" y="228" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">during bulk indexing (perf win)</text>
+    </svg>
+  </div>
+
+  <h3 id="embed-protocol">Matryoshka Protocol Properties</h3>
+  <table>
+    <thead><tr><th>Property</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>native_dims</code></td><td>The model's native embedding dimension (e.g. 3072 for OpenAI text-embedding-3-large)</td></tr>
+      <tr><td><code>client_side_truncation</code></td><td>When <code>True</code>, truncation is performed locally — no API call with a reduced dimension parameter</td></tr>
+      <tr><td><code>output_dimensions</code></td><td>Target storage dimension (e.g. 1536, 768, 512)</td></tr>
+      <tr><td>L2 normalization</td><td>Applied after truncation to preserve unit-norm invariant required by cosine-similarity HNSW search</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Key Behaviors</h3>
+  <ul>
+    <li>Migration is wired into <code>generate_missing_embeddings()</code> — dimension mismatch is detected automatically and triggers <code>_migrate_from_full_embeddings()</code></li>
+    <li>Supported providers: OpenAI (text-embedding-3-* series), VoyageAI</li>
+    <li>No API calls for matryoshka models — pure NumPy slice + L2-normalize</li>
+    <li>Compaction is suppressed during migration to prevent contention during bulk DB writes</li>
+  </ul>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 4: Git Diff Search
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="diff-search">
+  <h2>Git Diff Semantic Search</h2>
+
+  <p><code>DiffAwareSearchService</code> is a decorator around the existing search service that enables semantic search <em>within git history</em> — specifically within the changed regions of recent commits. This lets an AI assistant answer "find where we changed the embedding batch logic in the last 5 commits" without manually reading diffs.</p>
+
+  <h3 id="diff-arch">Architecture — Decorator Pattern</h3>
+
+  <div class="diagram">
+    <svg width="760" height="285" viewBox="0 0 760 285" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a4" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#89b4fa"/></marker>
+        <marker id="a4g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a6e3a1"/></marker>
+        <marker id="a4p" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#cba6f7"/></marker>
+      </defs>
+      <rect width="760" height="285" fill="#1e1e2e" rx="8"/>
+      <text x="380" y="24" text-anchor="middle" fill="#89b4fa" font-size="12" font-family="Segoe UI,Arial" font-weight="600">DiffAwareSearchService — Decorator Architecture</text>
+
+      <!-- Protocol (interface) -->
+      <rect x="270" y="44" width="220" height="38" rx="4" fill="#252540" stroke="#6c7086" stroke-width="1.5" stroke-dasharray="5,3"/>
+      <text x="380" y="61" text-anchor="middle" fill="#6c7086" font-size="11" font-family="Courier New">SearchServiceProtocol</text>
+      <text x="380" y="75" text-anchor="middle" fill="#585b70" font-size="9" font-family="Courier New">&lt;&lt; protocol — duck-typed &gt;&gt;</text>
+
+      <!-- DiffAwareSearchService -->
+      <rect x="230" y="125" width="300" height="56" rx="8" fill="#181825" stroke="#cba6f7" stroke-width="2.5"/>
+      <text x="380" y="147" text-anchor="middle" fill="#cba6f7" font-size="13" font-family="Courier New" font-weight="700">DiffAwareSearchService</text>
+      <text x="380" y="164" text-anchor="middle" fill="#6c7086" font-size="10" font-family="Courier New">async_search() / sync_search()</text>
+      <text x="380" y="177" text-anchor="middle" fill="#585b70" font-size="9" font-family="Courier New">guards: provider mismatch detection</text>
+
+      <!-- BaseSearchService -->
+      <rect x="30" y="228" width="180" height="44" rx="4" fill="#313244" stroke="#89b4fa" stroke-width="1.5"/>
+      <text x="120" y="248" text-anchor="middle" fill="#cdd6f4" font-size="11" font-family="Courier New">BaseSearchService</text>
+      <text x="120" y="264" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">DB semantic search</text>
+
+      <!-- Git diff runner/parser -->
+      <rect x="235" y="228" width="180" height="44" rx="4" fill="#313244" stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="325" y="248" text-anchor="middle" fill="#cdd6f4" font-size="11" font-family="Courier New">Git Diff Runner</text>
+      <text x="325" y="264" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">+ Parser</text>
+
+      <!-- Vector source mode -->
+      <rect x="440" y="228" width="185" height="44" rx="4" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="532" y="248" text-anchor="middle" fill="#fab387" font-size="11" font-family="Courier New">Vector Source Mode</text>
+      <text x="532" y="264" text-anchor="middle" fill="#fab387" font-size="10" font-family="Courier New">"db" | "diff" | "both"</text>
+
+      <!-- Result merger -->
+      <rect x="640" y="130" width="100" height="44" rx="4" fill="#313244" stroke="#89b4fa" stroke-width="1"/>
+      <text x="690" y="150" text-anchor="middle" fill="#cdd6f4" font-size="10" font-family="Courier New">Result</text>
+      <text x="690" y="166" text-anchor="middle" fill="#cdd6f4" font-size="10" font-family="Courier New">Merger</text>
+
+      <!-- CLI entry -->
+      <rect x="30" y="44" width="175" height="38" rx="4" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="117" y="61" text-anchor="middle" fill="#fab387" font-size="11" font-family="Courier New">chunkhound search</text>
+      <text x="117" y="75" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">--last-n / --commit-range / --commit-hash</text>
+
+      <!-- Arrows -->
+      <line x1="380" y1="82" x2="380" y2="125" stroke="#6c7086" stroke-width="1.5" marker-end="url(#a4)"/>
+      <text x="400" y="107" fill="#6c7086" font-size="9" font-family="Courier New">implements</text>
+
+      <line x1="205" y1="63" x2="250" y2="140" stroke="#fab387" stroke-width="1.5" marker-end="url(#a4)"/>
+
+      <line x1="305" y1="181" x2="190" y2="228" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a4)"/>
+      <text x="215" y="210" fill="#89b4fa" font-size="9" font-family="Courier New" text-anchor="middle">wraps</text>
+
+      <line x1="355" y1="181" x2="335" y2="228" stroke="#a6e3a1" stroke-width="1.5" marker-end="url(#a4g)"/>
+
+      <line x1="450" y1="181" x2="510" y2="228" stroke="#fab387" stroke-width="1.5" marker-end="url(#a4)"/>
+
+      <line x1="530" y1="152" x2="640" y2="152" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a4)"/>
+      <text x="585" y="145" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">merged results</text>
+    </svg>
+  </div>
+
+  <h3 id="diff-flow">User Flow</h3>
+  <pre><code># Search changed regions in last 5 commits
+chunkhound search "embedding batch logic" --last-n 5
+
+# Search within a specific commit range
+chunkhound search "compaction threshold" --commit-range main..HEAD
+
+# Search a single commit's changes
+chunkhound search "HNSW index recreation" --commit-hash abc1234
+
+# Search both DB and git diff results together
+chunkhound search "optimize()" --last-n 3 --source both</code></pre>
+
+  <ol class="step-list">
+    <li><strong>Parse git log</strong> — Runs <code>git log --patch</code> for the specified range or commit count</li>
+    <li><strong>Extract changed regions</strong> — Parses the unified diff to isolate added/modified code chunks per file</li>
+    <li><strong>Embed diff chunks</strong> — Uses the configured embedding provider to vectorize changed regions in batches</li>
+    <li><strong>Semantic search</strong> — Vector similarity search against the embedded diff chunks</li>
+    <li><strong>Merge results</strong> — Depending on <code>--source</code> mode, merges diff results with DB results and deduplicates</li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 5: LLM Provider Registry
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="llm-registry">
+  <h2>LLM Provider Registry Refactor</h2>
+
+  <p>The LLM provider system was refactored from a subclass-per-provider hierarchy to a data-driven registry. Adding a new provider no longer requires a new Python class — it's an entry in a registry dict.</p>
+
+  <div class="two-col">
+    <div>
+      <h3>Before</h3>
+      <ul>
+        <li>One subclass per provider: <code>GrokLLMProvider</code>, <code>DeepSeekLLMProvider</code>, etc.</li>
+        <li>Provider capabilities hardcoded in each class</li>
+        <li>Manual wiring in factory methods</li>
+        <li><code>grok_llm_provider.py</code> (deprecated, now removed)</li>
+      </ul>
+    </div>
+    <div>
+      <h3>After</h3>
+      <ul>
+        <li>Single <code>provider_registry.py</code> with data-driven factory</li>
+        <li><code>claude_model_resolution.py</code> (260 lines) for dynamic selection</li>
+        <li><code>llm_config.py</code> expanded to 1154 lines with full registry</li>
+        <li>New: Claude Opus 4.8, Gemini thinking budget, reasoning effort control</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>New Provider Capabilities</h3>
+  <table>
+    <thead><tr><th>Capability</th><th>Details</th></tr></thead>
+    <tbody>
+      <tr><td>Claude Opus 4.8</td><td>Added as supported model with automatic routing via <code>claude_model_resolution.py</code></td></tr>
+      <tr><td>Gemini configurable thinking</td><td>Thinking budget configurable per-request via provider settings</td></tr>
+      <tr><td>Reasoning effort control</td><td>Unified <code>reasoning_effort</code> parameter across all CLI providers (lazy model resolution)</td></tr>
+      <tr><td>Global config file</td><td>Default provider/model read from <code>~/.chunkhound/config.yaml</code> — no more repetitive CLI flags</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 6: Other Features
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="other">
+  <h2>Other Features</h2>
+
+  <h3>Rust Native File Scanner</h3>
+  <p>An optional Rust extension (<code>chunkhound_native</code>) replaces the pure-Python file scanner for significantly faster directory traversal on large codebases. The pure-Python fallback is always available if the Rust extension is not installed.</p>
+  <table>
+    <thead><tr><th>Component</th><th>Details</th></tr></thead>
+    <tbody>
+      <tr><td>Implementation</td><td><code>Cargo.toml</code>, <code>Cargo.lock</code>, <code>src/lib.rs</code> (116 lines)</td></tr>
+      <tr><td>Python binding</td><td><code>chunkhound_native/__init__.py</code></td></tr>
+      <tr><td>Installation</td><td><code>uv run scripts/install_native.py</code> (optional)</td></tr>
+      <tr><td>Tests</td><td><code>tests/test_rust_scanner.py</code> (185 lines)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Websearch Command + MCP Tool</h3>
+  <p>New CLI command and MCP tool for semantic web searches, powered by <code>zendriver</code> (replacing Playwright) for headless browser automation. Supports PDF handling, HTML parsing, and paginated results.</p>
+  <pre><code># CLI websearch
+chunkhound websearch "DuckDB HNSW index creation syntax"
+
+# Also available to AI assistants via MCP tool: websearch</code></pre>
+  <table>
+    <thead><tr><th>Component</th><th>Details</th></tr></thead>
+    <tbody>
+      <tr><td>Core</td><td><code>websearch_core.py</code> (673 lines) — zendriver, PDF, HTML parsing, pagination</td></tr>
+      <tr><td>CLI</td><td><code>websearch_command.py</code> (117 lines)</td></tr>
+      <tr><td>MCP</td><td>Integrated into <code>tools.py</code></td></tr>
+      <tr><td>Tests</td><td>900+ lines in <code>test_websearch_command.py</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>Global Configuration File</h3>
+  <pre><code># ~/.chunkhound/config.yaml
+embedding:
+  provider: openai
+  model: text-embedding-3-large
+  output_dimensions: 1536
+
+llm:
+  provider: anthropic
+  model: claude-opus-4-8</code></pre>
+
+  <h3>Setup Wizard Removal</h3>
+  <div class="callout">
+    The interactive terminal setup wizard (<code>setup_wizard.py</code>, 2032 lines) was removed in favor of the global config file and explicit CLI arguments. This removes 2k lines of maintenance surface and simplifies the onboarding path.
+  </div>
+
+  <h3>Python 3.14 &amp; CI Modernization</h3>
+  <ul>
+    <li>Updated minimum Python requirement to 3.14; fixed macOS 3.14 subprocess timeout issues</li>
+    <li>Workflow rename: <code>smoke-tests.yml</code> → <code>ci.yml</code></li>
+    <li>Release automation via OIDC Trusted Publishing: <code>release.yml</code> (stable) and <code>release-rc.yml</code> (pre-release)</li>
+    <li>Expanded CI matrix with flakiness hardening</li>
+  </ul>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 7: Full System Architecture
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="architecture">
+  <h2>System Architecture Overview</h2>
+
+  <p>Compaction is a cross-cutting concern that touches every major layer. The diagram below shows all components and their relationships after the changes on this branch.</p>
+
+  <div class="diagram">
+    <svg width="860" height="510" viewBox="0 0 860 510" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a5" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#89b4fa"/></marker>
+        <marker id="a5g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a6e3a1"/></marker>
+        <marker id="a5r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f38ba8"/></marker>
+        <marker id="a5p" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#cba6f7"/></marker>
+        <marker id="a5o" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fab387"/></marker>
+      </defs>
+      <rect width="860" height="510" fill="#1e1e2e" rx="8"/>
+      <text x="430" y="25" text-anchor="middle" fill="#89b4fa" font-size="13" font-family="Segoe UI,Arial" font-weight="600">ChunkHound — Full System Architecture (stack/1-compaction)</text>
+
+      <!-- Layer labels -->
+      <text x="14" y="75" fill="#585b70" font-size="9" font-family="Segoe UI" writing-mode="tb">ENTRY POINTS</text>
+      <text x="14" y="180" fill="#585b70" font-size="9" font-family="Segoe UI" writing-mode="tb">SERVICES</text>
+      <text x="14" y="305" fill="#585b70" font-size="9" font-family="Segoe UI" writing-mode="tb">CORE</text>
+      <text x="14" y="425" fill="#585b70" font-size="9" font-family="Segoe UI" writing-mode="tb">STORAGE</text>
+
+      <!-- Entry Points row -->
+      <rect x="30" y="48" width="120" height="40" rx="4" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="90" y="65" text-anchor="middle" fill="#fab387" font-size="10" font-family="Courier New">CLI Commands</text>
+      <text x="90" y="80" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">index/repack/search</text>
+
+      <rect x="170" y="48" width="130" height="40" rx="4" fill="#313244" stroke="#89b4fa" stroke-width="1.5"/>
+      <text x="235" y="65" text-anchor="middle" fill="#89b4fa" font-size="10" font-family="Courier New">MCP Server</text>
+      <text x="235" y="80" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">stdio / http:5173</text>
+
+      <rect x="320" y="48" width="130" height="40" rx="4" fill="#313244" stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="385" y="65" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New">Websearch CLI</text>
+      <text x="385" y="80" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">+ MCP tool</text>
+
+      <rect x="470" y="48" width="130" height="40" rx="4" fill="#313244" stroke="#f38ba8" stroke-width="1.5"/>
+      <text x="535" y="65" text-anchor="middle" fill="#f38ba8" font-size="10" font-family="Courier New">Diff Search CLI</text>
+      <text x="535" y="80" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">--last-n / --commit-range</text>
+
+      <rect x="620" y="48" width="130" height="40" rx="4" fill="#313244" stroke="#cba6f7" stroke-width="1.5"/>
+      <text x="685" y="65" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">LLM CLI</text>
+      <text x="685" y="80" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">reasoning_effort / model</text>
+
+      <!-- Services row -->
+      <rect x="30" y="140" width="150" height="44" rx="4" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="105" y="158" text-anchor="middle" fill="#fab387" font-size="10" font-family="Courier New">Indexing</text>
+      <text x="105" y="171" text-anchor="middle" fill="#fab387" font-size="10" font-family="Courier New">Coordinator</text>
+      <text x="105" y="180" text-anchor="middle" fill="#6c7086" font-size="7" font-family="Courier New">suppress + periodic compact</text>
+
+      <rect x="200" y="140" width="150" height="44" rx="4" fill="#313244" stroke="#89b4fa" stroke-width="1.5"/>
+      <text x="275" y="158" text-anchor="middle" fill="#89b4fa" font-size="10" font-family="Courier New">Realtime Indexing</text>
+      <text x="275" y="171" text-anchor="middle" fill="#89b4fa" font-size="10" font-family="Courier New">Service</text>
+      <text x="275" y="180" text-anchor="middle" fill="#6c7086" font-size="7" font-family="Courier New">defer / drain / replay</text>
+
+      <rect x="370" y="140" width="150" height="44" rx="4" fill="#313244" stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="445" y="158" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New">Embedding</text>
+      <text x="445" y="171" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New">Service</text>
+      <text x="445" y="180" text-anchor="middle" fill="#6c7086" font-size="7" font-family="Courier New">matryoshka + migration</text>
+
+      <rect x="540" y="140" width="155" height="44" rx="4" fill="#313244" stroke="#cba6f7" stroke-width="1.5"/>
+      <text x="617" y="158" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">DiffAware</text>
+      <text x="617" y="171" text-anchor="middle" fill="#cba6f7" font-size="10" font-family="Courier New">SearchService</text>
+      <text x="617" y="180" text-anchor="middle" fill="#6c7086" font-size="7" font-family="Courier New">decorator: db + git diff</text>
+
+      <rect x="710" y="140" width="130" height="44" rx="4" fill="#313244" stroke="#f38ba8" stroke-width="1.5"/>
+      <text x="775" y="158" text-anchor="middle" fill="#f38ba8" font-size="10" font-family="Courier New">LLM Provider</text>
+      <text x="775" y="171" text-anchor="middle" fill="#f38ba8" font-size="10" font-family="Courier New">Registry</text>
+      <text x="775" y="180" text-anchor="middle" fill="#6c7086" font-size="7" font-family="Courier New">data-driven factory</text>
+
+      <!-- Core row: CompactionService -->
+      <rect x="235" y="255" width="260" height="60" rx="8" fill="#181825" stroke="#cba6f7" stroke-width="2.5"/>
+      <text x="365" y="278" text-anchor="middle" fill="#cba6f7" font-size="13" font-family="Courier New" font-weight="700">CompactionService</text>
+      <text x="365" y="295" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">blocking / background / eligibility / shutdown</text>
+      <text x="365" y="308" text-anchor="middle" fill="#585b70" font-size="8" font-family="Courier New">threading.Lock · threading.Event · asyncio.to_thread</text>
+
+      <!-- Native Scanner (side) -->
+      <rect x="680" y="255" width="160" height="60" rx="4" fill="#313244" stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="760" y="276" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New">Native Scanner</text>
+      <text x="760" y="292" text-anchor="middle" fill="#a6e3a1" font-size="10" font-family="Courier New">(Rust ext)</text>
+      <text x="760" y="308" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">chunkhound_native</text>
+
+      <!-- DatabaseConfig (side) -->
+      <rect x="30" y="255" width="165" height="60" rx="4" fill="#313244" stroke="#fab387" stroke-width="1.5"/>
+      <text x="112" y="273" text-anchor="middle" fill="#fab387" font-size="10" font-family="Courier New">DatabaseConfig</text>
+      <text x="112" y="288" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">threshold · enabled</text>
+      <text x="112" y="301" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">min_size_mb · path</text>
+      <text x="112" y="314" text-anchor="middle" fill="#6c7086" font-size="8" font-family="Courier New">~/.chunkhound/config.yaml</text>
+
+      <!-- Storage row: DuckDBProvider -->
+      <rect x="235" y="375" width="260" height="60" rx="6" fill="#181825" stroke="#89b4fa" stroke-width="2"/>
+      <text x="365" y="398" text-anchor="middle" fill="#89b4fa" font-size="12" font-family="Courier New" font-weight="600">DuckDBProvider</text>
+      <text x="365" y="415" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">optimize() · get_storage_stats()</text>
+      <text x="365" y="428" text-anchor="middle" fill="#585b70" font-size="8" font-family="Courier New">HNSW recreate · _connection_allowed gate</text>
+
+      <!-- DuckDB files -->
+      <rect x="235" y="460" width="260" height="36" rx="4" fill="#2a2a1a" stroke="#fab387" stroke-width="1.5"/>
+      <text x="365" y="476" text-anchor="middle" fill="#fab387" font-size="10" font-family="Courier New">DuckDB Files on Disk</text>
+      <text x="365" y="490" text-anchor="middle" fill="#6c7086" font-size="9" font-family="Courier New">chunks.db · chunks.db.old · compact/</text>
+
+      <!-- Arrows: Entry → Services -->
+      <line x1="90" y1="88" x2="90" y2="140" stroke="#fab387" stroke-width="1.2" marker-end="url(#a5o)"/>
+      <line x1="235" y1="88" x2="255" y2="140" stroke="#89b4fa" stroke-width="1.2" marker-end="url(#a5)"/>
+      <line x1="235" y1="88" x2="105" y2="140" stroke="#89b4fa" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#a5)"/>
+      <line x1="535" y1="88" x2="600" y2="140" stroke="#f38ba8" stroke-width="1.2" marker-end="url(#a5r)"/>
+      <line x1="685" y1="88" x2="745" y2="140" stroke="#cba6f7" stroke-width="1.2" marker-end="url(#a5)"/>
+
+      <!-- Services → CompactionService -->
+      <line x1="105" y1="184" x2="270" y2="270" stroke="#fab387" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#a5o)"/>
+      <line x1="275" y1="184" x2="320" y2="255" stroke="#89b4fa" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#a5)"/>
+
+      <!-- CompactionService → DuckDBProvider -->
+      <line x1="365" y1="315" x2="365" y2="375" stroke="#cba6f7" stroke-width="2" marker-end="url(#a5p)"/>
+      <text x="398" y="348" fill="#cba6f7" font-size="10" font-family="Courier New">optimize()</text>
+
+      <!-- DuckDBProvider → Files -->
+      <line x1="365" y1="435" x2="365" y2="460" stroke="#89b4fa" stroke-width="1.5" marker-end="url(#a5)"/>
+
+      <!-- DatabaseConfig → CompactionService -->
+      <line x1="195" y1="280" x2="235" y2="280" stroke="#fab387" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#a5o)"/>
+
+      <!-- EmbeddingService → DuckDBProvider -->
+      <line x1="445" y1="184" x2="420" y2="375" stroke="#a6e3a1" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#a5g)"/>
+
+      <!-- DiffAwareSearch → DuckDBProvider -->
+      <line x1="617" y1="184" x2="470" y2="375" stroke="#cba6f7" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#a5p)"/>
+    </svg>
+  </div>
+
+  <h3>Component Responsibilities</h3>
+  <table>
+    <thead><tr><th>Component</th><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>CompactionService</td><td>services/compaction_service.py</td><td>Orchestrates blocking/background compaction, thread lifecycle, eligibility checks, graceful shutdown</td></tr>
+      <tr><td>DuckDBProvider.optimize()</td><td>providers/database/duckdb_provider.py</td><td>EXPORT/IMPORT/SWAP cycle, HNSW recreation, crash recovery, connection gate</td></tr>
+      <tr><td>RealtimeIndexingService</td><td>services/realtime_indexing_service.py</td><td>Defers filesystem events during compaction, drains and replays them after swap</td></tr>
+      <tr><td>IndexingCoordinator</td><td>services/indexing_coordinator.py</td><td>Suppresses probabilistic compaction during chunking; runs periodic interval compaction every 10 batches</td></tr>
+      <tr><td>DiffAwareSearchService</td><td>services/diff_aware_search_service.py</td><td>Decorator: overlays git diff semantic search on the base DB search service</td></tr>
+      <tr><td>EmbeddingService</td><td>services/embedding_service.py</td><td>Matryoshka truncation, migration from full-dim embeddings, provider batching</td></tr>
+      <tr><td>LLM Provider Registry</td><td>core/config/provider_registry.py</td><td>Data-driven factory for all LLM providers, dynamic model resolution</td></tr>
+      <tr><td>DatabaseConfig</td><td>core/config/database_config.py</td><td>Compaction thresholds, DB path resolution, memory limits, global config file support</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SECTION 8: Test Coverage
+──────────────────────────────────────────────────────────────── -->
+<div class="section" id="testing">
+  <h2>Test Coverage</h2>
+
+  <p>The compaction feature has the deepest test coverage on the branch, with ~2000 lines of unit and integration tests. A new stress test suite in <code>tests/stress/</code> covers scenarios that would be prohibitively slow to run in CI but are run manually to validate production scenarios.</p>
+
+  <h3>Compaction Tests</h3>
+  <table>
+    <thead><tr><th>File</th><th>Lines</th><th>Type</th><th>Coverage</th></tr></thead>
+    <tbody>
+      <tr><td>test_compaction_service.py</td><td>1977</td><td>Unit + E2E</td><td>~56 tests: all service behaviors, eligibility gating, blocking/background modes, shutdown, HNSW survival, concurrency, error recovery</td></tr>
+      <tr><td>test_compaction_contracts.py</td><td>~200</td><td>Integration</td><td>Suppression during chunking loop; periodic interval compaction via IndexingCoordinator</td></tr>
+      <tr><td>test_compaction_config_env.py</td><td>~150</td><td>Unit</td><td>Env var → config propagation for all 3 compaction settings</td></tr>
+      <tr><td>test_compaction_error.py</td><td>~120</td><td>Unit</td><td>CompactionError classification: preflight / compaction / connection; recoverable flag</td></tr>
+      <tr><td>test_post_compaction_reindex.py</td><td>~180</td><td>Integration</td><td>MCP callback-driven reindexing after background compaction completes</td></tr>
+      <tr><td>test_stdio_compaction_error.py</td><td>~100</td><td>Integration</td><td>MCP server structured error responses on compaction conflict</td></tr>
+      <tr><td>test_daemon_compaction_error.py</td><td>~100</td><td>Integration</td><td>Daemon-mode error handling when compaction fails mid-cycle</td></tr>
+      <tr><td>test_hnsw_survival.py <em>(stress)</em></td><td>~300</td><td>Stress</td><td>HNSW index integrity across many compaction cycles under high write load</td></tr>
+      <tr><td>test_lifecycle.py <em>(stress)</em></td><td>~200</td><td>Stress</td><td>Full index → compact → search lifecycle under realistic workloads</td></tr>
+      <tr><td>test_frag_sweep.py <em>(stress)</em></td><td>~200</td><td>Stress</td><td>Fragmentation accumulation and threshold detection over many iterations</td></tr>
+      <tr><td>test_concurrency.py <em>(stress)</em></td><td>~150</td><td>Stress</td><td>Concurrent compaction rejection; read queueing during SWAP phase</td></tr>
+      <tr><td>test_size_scaling.py <em>(stress)</em></td><td>~150</td><td>Stress</td><td>Min-size gate effectiveness across small, medium, and large databases</td></tr>
+    </tbody>
+  </table>
+
+  <details>
+    <summary>Test Classes in test_compaction_service.py (56 tests)</summary>
+    <div>
+    <table>
+      <thead><tr><th>Test Class</th><th>Tests</th><th>What It Covers</th></tr></thead>
+      <tbody>
+        <tr><td>TestStorageStats</td><td>8</td><td>Fragmentation thresholds, min-size gating, config propagation</td></tr>
+        <tr><td>TestBlockingCompaction</td><td>5</td><td>CLI synchronous path, concurrency rejection, cancellation</td></tr>
+        <tr><td>TestBackgroundCompaction</td><td>6</td><td>MCP async path, callback invocation, error handling, last_error</td></tr>
+        <tr><td>TestShutdown</td><td>9</td><td>Graceful shutdown, thread tracking, timeout behavior, self-healing flags</td></tr>
+        <tr><td>TestIsCompacting</td><td>2</td><td>State property under various conditions</td></tr>
+        <tr><td>TestDuckDBProviderOptimize</td><td>4</td><td>Real EXPORT/IMPORT cycle, data integrity, lock file cleanup</td></tr>
+        <tr><td>TestRowWasteRatio</td><td>3</td><td>Fragmentation measurement, threshold-based trigger detection</td></tr>
+        <tr><td>TestHNSWIndexSurvival</td><td>2</td><td>HNSW index preservation and recreation post-compaction</td></tr>
+        <tr><td>TestEmbeddingVectorSurvival</td><td>1</td><td>VSS vector integrity through EXPORT/IMPORT cycle</td></tr>
+        <tr><td>TestConcurrentAccessDuringCompaction</td><td>2</td><td>Read queueing behind _connection_allowed gate</td></tr>
+        <tr><td>TestCompactionErrorRecovery</td><td>5</td><td>Export/import failures, recovery, resilience under disk/permission errors</td></tr>
+        <tr><td>TestPostSwapCancelCheck</td><td>2</td><td>Graceful cancellation after the atomic swap point</td></tr>
+        <tr><td>TestConnectionGateDuringCompaction</td><td>1</td><td>MCP gate correctly blocks reads during active compaction</td></tr>
+        <tr><td>TestCompactionServiceEligibilityReal</td><td>2</td><td>Config thresholds with a real DuckDB provider instance</td></tr>
+        <tr><td>TestCompactionServiceEndToEnd</td><td>1</td><td>Full blocking path with real provider</td></tr>
+        <tr><td>TestBackgroundCompactionE2E</td><td>1</td><td>Full background path with real provider and callback</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </details>
+
+  <h3>Other Feature Tests</h3>
+  <table>
+    <thead><tr><th>File</th><th>Feature</th></tr></thead>
+    <tbody>
+      <tr><td>test_deep_research_with_diff.py</td><td>Git diff semantic search — integration with DiffAwareSearchService</td></tr>
+      <tr><td>test_websearch_command.py (900+ lines)</td><td>Websearch CLI command and MCP tool end-to-end</td></tr>
+      <tr><td>test_rust_scanner.py (185 lines)</td><td>Rust native file scanner correctness vs pure-Python baseline</td></tr>
+      <tr><td>test_mcp_initialization_invariant.py (1589 lines)</td><td>MCP server startup, tool initialization, ensure_tool_services</td></tr>
+      <tr><td>test_configurator_behavior.py</td><td>Astro website interactive configurator component</td></tr>
+      <tr><td>test_hero_terminal_behavior.py (356 lines)</td><td>Astro website hero terminal animation component</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<footer>ChunkHound — stack/1-compaction Branch Review &mdash; 2026-06-18 &mdash; Ariel Vaknin</footer>
+</div><!-- #main -->
+</div><!-- #wrapper -->
+
+</body>
+</html>

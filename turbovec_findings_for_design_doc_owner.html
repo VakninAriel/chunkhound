@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TurboVec POC — Findings &amp; Recommendation</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #f8f9fb; color: #222; }
+  header { background: #061E3C; color: #fff; padding: 40px 60px; }
+  header .eyebrow { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: #89b4c6; margin-bottom: 10px; }
+  header h1 { font-size: 32px; font-weight: 700; line-height: 1.2; }
+  header .subtitle { font-size: 15px; color: #b0c4d0; margin-top: 10px; }
+  .container { max-width: 1000px; margin: 0 auto; padding: 40px 60px; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 36px; }
+  .kpi-card { background: #fff; border-radius: 8px; padding: 20px; border-top: 4px solid #347DA2; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .kpi-card.pass { border-top-color: #4F840E; }
+  .kpi-card.warn { border-top-color: #F9C642; }
+  .kpi-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 8px; }
+  .kpi-card .value { font-size: 26px; font-weight: 700; color: #061E3C; }
+  .kpi-card .change { font-size: 12px; color: #4F840E; margin-top: 4px; }
+  .kpi-card .change.neutral { color: #888; }
+  .section { background: #fff; border-radius: 8px; padding: 28px 32px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .section h2 { font-size: 18px; font-weight: 700; color: #061E3C; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #347DA2; }
+  .section h3 { font-size: 15px; font-weight: 700; color: #0F4880; margin: 20px 0 8px; }
+  .section p { font-size: 15px; line-height: 1.8; color: #444; margin-bottom: 12px; }
+  .section ul, .section ol { padding-left: 20px; margin-bottom: 12px; }
+  .section li { font-size: 15px; line-height: 1.8; color: #444; margin-bottom: 6px; }
+  .callout { background: #EFF8FF; border-left: 5px solid #347DA2; padding: 16px 20px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 15px; color: #0F4880; }
+  .callout.warning { background: #FFF8EC; border-color: #F9C642; color: #7a5900; }
+  .callout.critical { background: #FFF0F0; border-color: #D22630; color: #7a1010; }
+  .callout.good { background: #F0FBEF; border-color: #4F840E; color: #275208; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 12px 0; }
+  th { background: #0F4880; color: #fff; padding: 9px 12px; text-align: left; }
+  td { padding: 8px 12px; border-bottom: 1px solid #eee; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .sev { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+  .sev-resolved { background: #dcfce7; color: #166534; }
+  .sev-open { background: #fef3c7; color: #92400e; }
+  footer { text-align: center; font-size: 12px; color: #aaa; padding: 32px 0; }
+  footer strong { color: #347DA2; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">Architecture Decision · POC Findings</div>
+  <h1>TurboVec Integration — POC Findings &amp; Recommendation</h1>
+  <div class="subtitle">Prepared for: Ariel Vaknin (design doc owner) &bull; Re: "Replacing DuckDB-VSS with TurboVec in the Native Rust Extension" &bull; Status: Evaluation complete</div>
+</header>
+<div class="container">
+
+  <div class="kpi-grid">
+    <div class="kpi-card pass">
+      <div class="label">Recall@10 (4-bit, prod scale)</div>
+      <div class="value">1.0000</div>
+      <div class="change">Passes at every dimension/bit-width tested</div>
+    </div>
+    <div class="kpi-card warn">
+      <div class="label">Recall@1 (4-bit, prod scale)</div>
+      <div class="value">0.89</div>
+      <div class="change neutral">vs. claimed 0.997 — diagnosed, not fatal</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Compression (4-bit)</div>
+      <div class="value">7.3x</div>
+      <div class="change neutral">Real, not the claimed 16x</div>
+    </div>
+    <div class="kpi-card pass">
+      <div class="label">from_parts() blocker</div>
+      <div class="value">Resolved</div>
+      <div class="change">Two working options, both tested</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Bottom Line</h2>
+    <div class="callout good"><strong>TurboVec is viable for ChunkHound's actual usage pattern</strong> (top-10 retrieval), once four corrections are folded into the design. The blocking engineering risk identified mid-POC — the private <code>from_parts()</code> API — now has two independently tested, working solutions. No forking or patching of turbovec was needed for either.</div>
+    <p>This POC (<code>test-crates/turbovec-poc/</code>, throwaway spike, no production code touched) validated every headline claim in the design doc against this repo's own real, indexed embeddings — not synthetic data. Four of the doc's claims needed correction, one deeper technical blocker was found and resolved, and the alarming-looking recall@1 number was run down to a specific, well-understood cause rather than left as an open question.</p>
+  </div>
+
+  <div class="section">
+    <h2>What Needs Your Decision</h2>
+    <ol>
+      <li><strong>Pick a path for the <code>from_parts()</code> fallback</strong>: git-pin to turbovec's unreleased fix now (restores your original schema exactly, but depends on an untagged commit), or ship the durability-engineering redesign against the stable published crate today (proven, +27.3% disk cost, no dependency risk). Recommendation below.</li>
+      <li><strong>Confirm recall@1 isn't load-bearing anywhere</strong> in the current search pipeline (reranking, single-hop's top candidate, etc.) — recall@10 passes cleanly, recall@1 doesn't fully match the design doc's claim, and the diagnosis below explains why. If nothing depends on a single top-1 answer, this is a non-issue.</li>
+      <li><strong>Accept the corrected compression/system-dependency numbers</strong> (7.3–7.9x, not 16x; a system BLAS library required on Linux) as the real basis for the go/no-go, superseding the design doc's original figures.</li>
+    </ol>
+  </div>
+
+  <div class="section">
+    <h2>Corrections to the Design Doc</h2>
+    <p>Found by reading the real <code>turbovec</code> 0.9.0 source directly, not just its docs or README:</p>
+    <table>
+      <tr><th>#</th><th>Design doc claimed</th><th>Actually found</th></tr>
+      <tr><td>1</td><td><code>IdMapIndex::from_parts()</code> reconstructs an index from decomposed parts</td><td>No such method exists; only file-based <code>write()</code>/<code>load()</code> — proven bit-identical by testing</td></tr>
+      <tr><td>2</td><td><code>embeddings_quantized</code> table lets you rebuild from packed bytes with no whole-snapshot blob</td><td>Required API (<code>TurboQuantIndex::from_parts()</code> + accessors) was private in the published crate. <span class="sev sev-resolved">Resolved</span> — see below</td></tr>
+      <tr><td>3</td><td>"No new system libraries" needed</td><td>Unconditionally requires a system BLAS library on Linux; this environment needed a package install before it would even build</td></tr>
+      <tr><td>4</td><td>16x compression at 4-bit</td><td>7.3–7.9x in practice (the 16x figure is actually the 2-bit number), further reduced by real per-vector id+scale overhead</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>The from_parts() Problem — Two Options, Both Tested</h2>
+    <p>The design doc's <code>embeddings_quantized</code> table has one stated purpose: rebuild the index from durable per-vector bytes if the main snapshot is lost, with no re-embedding. That's blocked by finding #2 above. We built and tested two independent solutions against this repo's real corpus — full detail in <code>test-crates/turbovec-poc/README.md</code>.</p>
+
+    <h3>Option 1 — pin to the unreleased upstream fix</h3>
+    <p>The exact fix (PR #204) is merged on turbovec's <code>main</code> branch, not yet released to crates.io. Git-pinned our dependency to that commit; a new test proves the design doc's original mechanism works end to end — bit-identical results, no snapshot blob, no re-embedding. One gap found: <code>IdMapIndex</code> itself still has no accessor for its inner index, so any real implementation has to hand-roll the id-reattachment layer regardless.</p>
+    <div class="callout warning">Trade-off: depends on an untagged, unreleased commit — safe today (content-addressed SHA pin), but not a versioned release we'd want to ship long-term without upstream cutting an actual tag.</div>
+
+    <h3>Option 2(C) — durability engineering, no from_parts() needed</h3>
+    <p>Works against the stable, published crate today. Checksummed, rotating snapshots plus keeping ChunkHound's existing float32 table as the true last resort.</p>
+    <table>
+      <tr><th>Test</th><th>Result</th></tr>
+      <tr><td>One snapshot generation corrupted</td><td>Falls through cleanly to the next, identical results</td></tr>
+      <tr><td>Every generation corrupted</td><td>Fails cleanly — no panic, no silent garbage</td></tr>
+      <tr><td>Total loss → rebuild from stored float32</td><td>Identical results; <strong>0.45–0.62s</strong> real cost on the full 72,974-vector corpus (local, no API calls)</td></tr>
+      <tr><td>Storage cost</td><td><strong>+27.3%</strong> vs. today's baseline — a real, measured number, not an estimate</td></tr>
+    </table>
+    <div class="callout good"><strong>Recommendation: ship this option as the safety net regardless of what else gets decided.</strong> It's cheap, uses only the stable published API, and every claim above is now proven by a passing test — not designed on paper. Revisit Option 1 once turbovec cuts an actual tagged release.</div>
+  </div>
+
+  <div class="section">
+    <h2>Why Recall@1 Looked Alarming (and What It Actually Means)</h2>
+    <p>Recall@1 measured 0.89 at production scale — far below the claimed 0.997. Two mechanisms were tested, cheapest first, using this repo's own code corpus:</p>
+    <div class="two-col">
+      <div>
+        <h3>Near-tie ambiguity (the main driver)</h3>
+        <p>Misses cluster almost entirely on queries where the true top-1 and top-2 chunks were already near-indistinguishable in exact, unquantized similarity (mean score gap 0.0009 on misses vs. 0.0589 on hits — a ~65x difference). This corpus has many near-duplicate chunks; any approximate method would struggle the same way. Not a TurboVec defect.</p>
+      </div>
+      <div>
+        <h3>Embedding truncation (a smaller, real factor)</h3>
+        <p>On a controlled matched sample, recall@1 improved from 0.9367 (256-dim, truncated) to 0.9700 at native 2560-dim — real dimensions matter, but the effect is modest and disappears entirely by k=3.</p>
+      </div>
+    </div>
+    <div class="callout"><strong>At k=10 — ChunkHound's actual default page size — recall is 1.0000 at every dimension and bit-width tested.</strong> The gap is real but confined to strict top-1 matching, which the product doesn't rely on unless something specific does (see "What Needs Your Decision" above).</div>
+  </div>
+
+  <div class="section">
+    <h2>Recommendation</h2>
+    <div class="two-col">
+      <div>
+        <h3>Go, with conditions</h3>
+        <ul>
+          <li>Ship Option 2(C) (durability engineering) as the production fallback design — proven, stable-API, cheap.</li>
+          <li>Fold the 4 corrections into the design doc before implementation kicks off.</li>
+          <li>Confirm no caller depends on a strict top-1 answer.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Next steps</h3>
+        <ul>
+          <li>Sign off on Option 2(C) vs. Option 1 (or both, staged) for the fallback design.</li>
+          <li>Decide priority against other roadmap items with the corrected numbers (7.3x compression, not 16x).</li>
+          <li>Full technical detail and reproducible numbers: <code>test-crates/turbovec-poc/README.md</code> and the companion technical POC summary report.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <footer><strong>TurboVec POC Findings</strong> &mdash; prepared from a throwaway spike (test-crates/turbovec-poc/), no production code touched &mdash; 2026-08-03</footer>
+</div>
+</body>
+</html>

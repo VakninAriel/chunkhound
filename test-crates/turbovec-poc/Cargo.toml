@@ -1,0 +1,29 @@
+[package]
+name = "turbovec-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "serve"
+path = "src/bin/serve.rs"
+
+[[bin]]
+name = "probe_dim"
+path = "src/bin/probe_dim.rs"
+
+[dependencies]
+turbovec = { git = "https://github.com/RyanCodrai/turbovec", rev = "ae31ba3bed1cbe631a573fad0c420385bb227621" }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crc32fast = "1"
+blas-src = { version = "0.10", default-features = false, features = ["openblas"] }
+openblas-src = { version = "0.10", default-features = false, features = ["cblas", "system"] }
+
+[profile.release]
+opt-level = 3
